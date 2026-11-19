@@ -1,6 +1,7 @@
-┌────────────────────┐ ┌─────────────┐ ┌──────────────┐
-│                    │ │             │ │              │
-│premier long libelle│ │deuxieme long│ │troisieme long│
-│                    ├►│   libelle   ├►│   libelle    │
-│                    │ │             │ │              │
-└────────────────────┘ └─────────────┘ └──────────────┘
+┌───────┐ ┌────────┐ ┌─────────┐
+│       │ │        │ │         │
+│premier│ │deuxieme│ │troisieme│
+│ long  ├►│  long  ├►│  long   │
+│libelle│ │libelle │ │ libelle │
+│       │ │        │ │         │
+└───────┘ └────────┘ └─────────┘

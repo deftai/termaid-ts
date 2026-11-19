@@ -7,6 +7,8 @@
   string email  UK  "primary contact"
   int age                           │
   └─────────────────────────────────┘
+                   │1
+                   │ places
                    │0..*
         ┌─────────────────────┐
         │        ORDER        │
