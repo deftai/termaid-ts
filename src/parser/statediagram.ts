@@ -5,15 +5,16 @@
 
 import {
   Direction,
+  EdgeStyle,
   Graph,
   makeEdge,
   makeNode,
   makeSubgraph,
   type Subgraph,
-  EdgeStyle,
 } from "../graph/model.ts";
 import { NodeShape } from "../graph/shapes.ts";
 import { PY_WORD, pyStrip } from "../pycompat.ts";
+import { lineBreaks } from "../utils.ts";
 
 const START_ID = "[*]_start";
 const END_ID = "[*]_end";
@@ -30,7 +31,6 @@ const WORD = PY_WORD;
 
 const NOTE_RE = new RegExp(String.raw`^note\s+(right\s+of|left\s+of)\s+(\S+)\s*:\s*(.*)`, "iu");
 const NOTE_PREFIX = "note ";
-const BR_RE = /<br\s*\/?>/gi;
 const ALIAS_RE = new RegExp(String.raw`^state\s+"([^"]+)"\s+as\s+(\S+)\s*(<<${WORD}+>>)?`, "u");
 const STEREOTYPE_RE = new RegExp(String.raw`^state\s+(\S+)\s+(<<${WORD}+>>)`, "u");
 const COMPOSITE_RE = /^state\s+"?([^"{}]+)"?\s*\{/u;
@@ -62,10 +62,11 @@ class StateDiagramParser {
     const lines = this.preprocess(this.text);
     if (lines.length === 0) return this.graph;
 
-    const header = pyStrip((lines[0] as string));
+    const header = pyStrip(lines[0] as string);
     if (header.startsWith(HEADER)) this.graph.direction = Direction.TB;
 
     for (const line of lines.slice(1)) this.parseLine(line);
+    this.resolveCompositeEdges();
     return this.graph;
   }
 
@@ -100,19 +101,18 @@ class StateDiagramParser {
     if (note !== null) {
       const position = (note[1] as string).toLowerCase().replaceAll(" ", "");
       const target = note[2] as string;
-      const text = pyStrip((note[3] as string)).replace(BR_RE, "\n");
+      const text = lineBreaks(pyStrip(note[3] as string));
       if (!this.graph.nodes.has(target)) {
         this.ensureNode(target, this.aliases.get(target) ?? target, NodeShape.ROUNDED);
       }
       this.graph.notes.push({ text, position, target });
       return;
     }
-    // Every other note form is read and dropped, rather than fall through to the transition matcher below.
     if (lower.startsWith(NOTE_PREFIX)) return;
 
     const alias = ALIAS_RE.exec(line);
     if (alias !== null) {
-      const label = alias[1] as string;
+      const label = lineBreaks(alias[1] as string, "\\n");
       const id = alias[2] as string;
       this.aliases.set(id, label);
       this.ensureNode(id, label, stereotypeToShape(alias[3]));
@@ -128,9 +128,10 @@ class StateDiagramParser {
 
     const composite = COMPOSITE_RE.exec(line);
     if (composite !== null) {
-      const label = pyStrip((composite[1] as string));
+      const sgLabel = pyStrip(composite[1] as string);
+      const sgId = sgLabel.replaceAll(" ", "_");
       const parent = this.subgraphStack[this.subgraphStack.length - 1] ?? null;
-      const sg = makeSubgraph(label.replaceAll(" ", "_"), label, { parent });
+      const sg = makeSubgraph(sgId, lineBreaks(sgLabel, " "), { parent });
       if (parent !== null) parent.children.push(sg);
       else this.graph.subgraphs.push(sg);
       this.subgraphStack.push(sg);
@@ -139,9 +140,9 @@ class StateDiagramParser {
 
     const transition = TRANSITION_RE.exec(line);
     if (transition !== null) {
-      const source = this.resolveState(pyStrip((transition[1] as string)), true);
-      const target = this.resolveState(pyStrip((transition[2] as string)), false);
-      const label = pyStrip((transition[3] ?? ""));
+      const source = this.resolveState(pyStrip(transition[1] as string), true);
+      const target = this.resolveState(pyStrip(transition[2] as string), false);
+      const label = lineBreaks(pyStrip(transition[3] ?? ""));
       this.graph.addEdge(makeEdge(source, target, { label, style: EdgeStyle.SOLID, hasArrowEnd: true }));
       return;
     }
@@ -152,7 +153,46 @@ class StateDiagramParser {
     }
   }
 
-  /** `[*]` becomes a fresh endpoint per sighting, so two exits are two circles rather than one shared one. */
+  /**
+   * Point transitions at composite states to the subgraph itself, removing any duplicate plain node created before or
+   * after the composite `state Foo { ... }` block.
+   */
+  private resolveCompositeEdges(): void {
+    const sgIds = new Set<string>();
+    const allSubgraphs: Subgraph[] = [];
+    const collect = (subs: Subgraph[]): void => {
+      for (const sg of subs) {
+        sgIds.add(sg.id);
+        allSubgraphs.push(sg);
+        collect(sg.children);
+      }
+    };
+    collect(this.graph.subgraphs);
+    if (sgIds.size === 0) return;
+
+    const toRemove = new Set<string>();
+    for (const edge of this.graph.edges) {
+      if (sgIds.has(edge.source)) {
+        edge.sourceIsSubgraph = true;
+        toRemove.add(edge.source);
+      }
+      if (sgIds.has(edge.target)) {
+        edge.targetIsSubgraph = true;
+        toRemove.add(edge.target);
+      }
+    }
+
+    for (const nid of toRemove) {
+      this.graph.nodes.delete(nid);
+      const orderIdx = this.graph.nodeOrder.indexOf(nid);
+      if (orderIdx !== -1) this.graph.nodeOrder.splice(orderIdx, 1);
+      for (const sg of allSubgraphs) {
+        const sgIdx = sg.nodeIds.indexOf(nid);
+        if (sgIdx !== -1) sg.nodeIds.splice(sgIdx, 1);
+      }
+    }
+  }
+
   private resolveState(raw: string, isSource: boolean): string {
     if (raw === START_MARK) {
       if (isSource) {
@@ -167,7 +207,6 @@ class StateDiagramParser {
       return id;
     }
 
-    // A shape is only set on a node NEW here, or a stereotype declared earlier would be overwritten by the default.
     if (!this.graph.nodes.has(raw)) {
       this.ensureNode(raw, this.aliases.get(raw) ?? raw, NodeShape.ROUNDED);
     }

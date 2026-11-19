@@ -14,6 +14,7 @@ import {
   type SequenceDiagram,
 } from "../model/sequence.ts";
 import { pyRepr, pyStrip } from "../pycompat.ts";
+import { lineBreaks } from "../utils.ts";
 
 /** Every arrow, LONGEST first, so `-->>` is never read as `-->` followed by a stray `>`. */
 const ARROW_PATTERNS: ReadonlyArray<readonly [string, string, string]> = [
@@ -138,7 +139,7 @@ export function parseSequenceDiagram(text: string): SequenceDiagram {
       for (const id of participants) ensureParticipant(diagram, id);
       target().push({
         type: "note",
-        text: pyStrip((note[4] as string)).replace(BREAK_TAG_RE, NEWLINE),
+        text: lineBreaks(pyStrip(note[4] as string)),
         position: (note[1] as string).toLowerCase().replace(POSITION_SPACE_RE, ""),
         participants,
       });
@@ -157,7 +158,7 @@ export function parseSequenceDiagram(text: string): SequenceDiagram {
     if (declared !== null) {
       const kind = (declared[1] as string).toLowerCase();
       const id = declared[2] as string;
-      const label = declared[3] === undefined ? id : pyStrip(declared[3]);
+      const label = declared[3] === undefined || declared[3] === "" ? id : lineBreaks(pyStrip(declared[3]));
       const existing = diagram.participants.find((participant) => participant.id === id);
       if (existing === undefined) diagram.participants.push(makeParticipant(id, label, kind));
       else {
@@ -180,7 +181,7 @@ export function parseSequenceDiagram(text: string): SequenceDiagram {
         type: "message",
         source,
         target: messageTarget,
-        label: message[4] === undefined ? "" : pyStrip(message[4]),
+        label: message[4] === undefined || message[4] === "" ? "" : lineBreaks(pyStrip(message[4])),
         lineType,
         arrowType,
       });

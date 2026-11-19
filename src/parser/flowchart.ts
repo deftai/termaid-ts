@@ -3,6 +3,7 @@
 // Recursive descent over mermaid flowchart syntax: the graph/flowchart header and its directions, every node shape,
 // every edge form, edge labels, subgraphs, classDef, comments, chained arrows and the `&` operator.
 
+import { decodeDecimalCharRef, lookupHtml5Entity } from "../data/htmlentities.ts";
 import {
   ArrowType,
   Direction,
@@ -16,7 +17,8 @@ import {
   type Subgraph,
 } from "../graph/model.ts";
 import { NodeShape } from "../graph/shapes.ts";
-import { pyStrip } from "../pycompat.ts";
+import { isPySpace, lstrip, pyStrip } from "../pycompat.ts";
+import { lineBreaks } from "../utils.ts";
 
 /** Node shape delimiters, MOST SPECIFIC FIRST: `((` must be tried before `(` or a circle reads as a rounded box. */
 const SHAPE_PATTERNS: ReadonlyArray<readonly [string, string, NodeShape]> = [
@@ -68,16 +70,13 @@ const AMPERSAND = "&";
 const OPENERS = "([{";
 const CLOSERS = ")]}";
 const HEADER_KEYWORDS = ["graph", "flowchart"];
-/** A base arrow, `-->` or `==>`, spends this many repeating characters; every extra one lengthens the edge. */
 const HEADED_BASE = 2;
 const OPEN_BASE = 3;
 const MIN_LENGTH = 1;
-/** The index `linkStyle default` writes under. */
 const DEFAULT_LINK_STYLE = -1;
 
 const count = (text: string, ch: string): number => text.split(ch).length - 1;
 
-/** Python's `str.strip(chars)`, which strips a SET of characters and not a prefix. */
 function stripChars(text: string, chars: string, left: boolean, right: boolean): string {
   let start = 0;
   let end = text.length;
@@ -86,10 +85,8 @@ function stripChars(text: string, chars: string, left: boolean, right: boolean):
   return text.slice(start, end);
 }
 
-/** Python's `str.split()` with no argument: on runs of whitespace, empties dropped. */
 const words = (line: string): string[] => line.split(/\s+/).filter((w) => w !== "");
 
-/** Python's `str.split(None, maxsplit)`: the tail keeps its own spacing. */
 function splitWords(line: string, maxsplit: number): string[] {
   const out: string[] = [];
   let rest = line.trimStart();
@@ -102,6 +99,45 @@ function splitWords(line: string, maxsplit: number): string[] {
   if (rest !== "") out.push(rest);
   return out;
 }
+
+/** Blank out the inside of double-quoted spans, keeping every UTF-16 index in place. */
+function maskQuotes(text: string): string {
+  let out = "";
+  let inQuote = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i] as string;
+    if (ch === QUOTE) {
+      inQuote = !inQuote;
+      out += ch;
+    } else if (inQuote) {
+      out += " ";
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+const ENTITY_CODE_RE = /#([A-Za-z0-9]+);/g;
+
+/** Decode Mermaid entity codes: `#quot;` and other HTML5 names, `#9829;` in base 10. */
+function decodeEntities(text: string): string {
+  return text.replace(ENTITY_CODE_RE, (whole, code: string) => {
+    const decoded = /^\d+$/.test(code) ? decodeDecimalCharRef(code) : (lookupHtml5Entity(code) ?? whole);
+    const cps = [...decoded];
+    if (cps.length === 1) {
+      const ch = cps[0] as string;
+      const cp = ch.codePointAt(0) as number;
+      if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)) {
+        return isPySpace(ch) ? " " : "";
+      }
+    }
+    return decoded;
+  });
+}
+
+/** `<br>` in a node label: the literal `\n` line breaks node labels use. */
+const nodeLineBreaks = (label: string): string => lineBreaks(label, "\\n");
 
 /** How long an edge runs: a base arrow is one, and every repeated character past the base adds one. */
 export function computeArrowLength(arrowText: string, style: EdgeStyle): number {
@@ -119,7 +155,6 @@ export function computeArrowLength(arrowText: string, style: EdgeStyle): number 
   return MIN_LENGTH;
 }
 
-/** `key: value` pairs out of an `@{...}` body, a comma inside quotes belonging to the value. */
 function parseAtShapeProps(body: string): Map<string, string> {
   const props = new Map<string, string>();
   const parts: string[] = [];
@@ -146,8 +181,9 @@ function parseAtShapeProps(body: string): Map<string, string> {
   return props;
 }
 
+/** Remove `%%` comments from a line, leaving `%%` inside quoted labels. */
 const stripComments = (line: string): string => {
-  const at = line.indexOf(COMMENT);
+  const at = maskQuotes(line).indexOf(COMMENT);
   return at >= 0 ? line.slice(0, at) : line;
 };
 
@@ -157,16 +193,13 @@ export function parseMarkdownLabel(text: string): { plain: string; segments: Lab
   if (!(stripped.startsWith('"`') && stripped.endsWith('`"'))) return null;
 
   const md = stripped.slice(2, -2);
-  const segments: LabelSegment[] = [];
-  const plainParts: string[] = [];
+  const rawSegments: LabelSegment[] = [];
   let i = 0;
   while (i < md.length) {
     if (md.slice(i, i + 2) === "**") {
       const end = md.indexOf("**", i + 2);
       if (end !== -1) {
-        const inner = md.slice(i + 2, end);
-        segments.push({ text: inner, bold: true, italic: false });
-        plainParts.push(inner);
+        rawSegments.push({ text: md.slice(i + 2, end), bold: true, italic: false });
         i = end + 2;
         continue;
       }
@@ -174,23 +207,20 @@ export function parseMarkdownLabel(text: string): { plain: string; segments: Lab
     if (md[i] === "*") {
       const end = md.indexOf("*", i + 1);
       if (end !== -1) {
-        const inner = md.slice(i + 1, end);
-        segments.push({ text: inner, bold: false, italic: true });
-        plainParts.push(inner);
+        rawSegments.push({ text: md.slice(i + 1, end), bold: false, italic: true });
         i = end + 1;
         continue;
       }
     }
     let j = i;
     while (j < md.length && md[j] !== "*") j++;
-    segments.push({ text: md.slice(i, j), bold: false, italic: false });
-    plainParts.push(md.slice(i, j));
+    rawSegments.push({ text: md.slice(i, j), bold: false, italic: false });
     i = j;
   }
-  return { plain: plainParts.join(""), segments };
+  const segments = rawSegments.map((s) => ({ ...s, text: decodeEntities(s.text) }));
+  return { plain: segments.map((s) => s.text).join(""), segments };
 }
 
-/** `prop1:val1,prop2:val2` read as a map. */
 function parseCssProps(text: string): Map<string, string> {
   const props = new Map<string, string>();
   for (const prop of text.split(",")) {
@@ -201,17 +231,9 @@ function parseCssProps(text: string): Map<string, string> {
   return props;
 }
 
-/** Whether a position sits inside a double-quoted run. */
-function insideQuotes(text: string, pos: number): boolean {
-  let inQuote = false;
-  for (let i = 0; i < pos; i++) if (text[i] === QUOTE) inQuote = !inQuote;
-  return inQuote;
-}
-
 const stripQuotes = (text: string): string =>
   text.length >= 2 && text.startsWith(QUOTE) && text.endsWith(QUOTE) ? text.slice(1, -1) : text;
 
-/** One line cut into statements at every semicolon OUTSIDE quotes. */
 function splitOnSemicolons(line: string): string[] {
   const parts: string[] = [];
   let buf: string[] = [];
@@ -231,7 +253,6 @@ function splitOnSemicolons(line: string): string[] {
   return parts;
 }
 
-/** A piece of a parsed line: either a group of nodes or the arrow between two of them. */
 interface Segment {
   text: string;
   isArrow: boolean;
@@ -258,7 +279,6 @@ function makeSegment(fields: Partial<Segment> & { text: string }): Segment {
   };
 }
 
-/** What a found arrow is: where it sits in the line, and everything the edge it makes will carry. */
 interface ArrowMatch {
   pos: number;
   end: number;
@@ -271,7 +291,6 @@ interface ArrowMatch {
   typeEnd: ArrowType;
 }
 
-/** Plain arrows, tried in order of specificity and the EARLIEST match winning. */
 const PLAIN_ARROWS: ReadonlyArray<{
   re: RegExp;
   style: EdgeStyle;
@@ -296,10 +315,8 @@ const PLAIN_ARROWS: ReadonlyArray<{
   { re: /-{3,}/, style: EdgeStyle.SOLID, hasStart: false, hasEnd: false, typeStart: ArrowType.ARROW, typeEnd: ArrowType.ARROW },
 ];
 
-/** An arrow carrying its label between pipes. */
 const PIPED_ARROW = /(<--|<-\.|-\.|-+|=+|<)([-=.]+)(>?)(\|)([^|]*)(\|)/;
 
-/** An arrow carrying its label BETWEEN its halves: `-- text -->`. */
 const SPLIT_ARROWS: ReadonlyArray<{ re: RegExp; style: EdgeStyle; hasStart: boolean; hasEnd: boolean }> = [
   { re: /(--)(\s+.+?\s+)(-->)/, style: EdgeStyle.SOLID, hasStart: false, hasEnd: true },
   { re: /(==)(\s+.+?\s+)(==>)/, style: EdgeStyle.THICK, hasStart: false, hasEnd: true },
@@ -307,14 +324,14 @@ const SPLIT_ARROWS: ReadonlyArray<{ re: RegExp; style: EdgeStyle; hasStart: bool
 ];
 
 const AT_SHAPE_RE = /^([a-zA-Z_]\w*)\s*@\{([\s\S]+)\}$/;
-const SUBGRAPH_BRACKET_RE = /^(\S+)\s+\[(.+)\]/;
+const SUBGRAPH_BRACKET_RE = /^([^\s\[]+)\s*\[(.+)\]/;
 const PLAIN_ID_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const DELIM_IN_ID_RE = /[[\](){}<>]/;
 const STYLE_CLASS_MARK = ":::";
 
 class FlowchartParser {
   private readonly graph = new Graph();
   private readonly subgraphStack: Subgraph[] = [];
-  /** Nodes written with an explicit shape, which is what tells a real node from a subgraph reference. */
   private readonly shapedNodeIds = new Set<string>();
   private readonly text: string;
 
@@ -334,7 +351,10 @@ class FlowchartParser {
 
   private preprocess(text: string): string[] {
     const raw: string[] = [];
-    for (const line of text.split("\n")) raw.push(...splitOnSemicolons(line));
+    for (const line of text.split("\n")) {
+      if (lstrip(line).startsWith(COMMENT)) continue;
+      raw.push(...splitOnSemicolons(line));
+    }
     return raw.map((line) => pyStrip(stripComments(line))).filter((line) => line !== "");
   }
 
@@ -343,7 +363,8 @@ class FlowchartParser {
     const keyword = (parts[0] ?? "").toLowerCase();
     if (!HEADER_KEYWORDS.includes(keyword)) return;
     const named = (parts[1] ?? "").toUpperCase();
-    this.graph.direction = named in Direction ? (Direction as Record<string, Direction>)[named] as Direction : Direction.TB;
+    this.graph.direction =
+      named in Direction ? ((Direction as Record<string, Direction>)[named] as Direction) : Direction.TB;
   }
 
   private parseLine(line: string): void {
@@ -373,7 +394,7 @@ class FlowchartParser {
     }
 
     const parent = this.subgraphStack[this.subgraphStack.length - 1] ?? null;
-    const sg = makeSubgraph(stripQuotes(id), stripQuotes(label), { parent });
+    const sg = makeSubgraph(stripQuotes(id), decodeEntities(lineBreaks(stripQuotes(label), " ")), { parent });
     if (parent === null) this.graph.subgraphs.push(sg);
     else parent.children.push(sg);
     this.subgraphStack.push(sg);
@@ -480,10 +501,6 @@ class FlowchartParser {
     if (sg !== undefined && !sg.nodeIds.includes(nodeId)) sg.nodeIds.push(nodeId);
   }
 
-  /**
-   * An edge naming a SUBGRAPH is written exactly like an edge naming a node, so the node it auto-created is spurious:
-   * the edge is marked and the node taken back out, wherever it was registered.
-   */
   private resolveSubgraphEdges(): void {
     const ids = new Set<string>();
     const collect = (subs: Subgraph[]): void => {
@@ -522,7 +539,6 @@ class FlowchartParser {
     }
   }
 
-  /** `A & B & C` into three, an `&` inside a label being part of the label. */
   private splitAmpersand(text: string): string[] {
     const parts: string[] = [];
     let depth = 0;
@@ -555,27 +571,12 @@ class FlowchartParser {
     return parts;
   }
 
-  /** Quoted content blanked out, so an arrow spelled inside a label is not an arrow. */
-  private static maskQuotes(text: string): string {
-    const out = [...text];
-    let inQuote = false;
-    for (let i = 0; i < out.length; i++) {
-      const ch = out[i] as string;
-      if (!inQuote && ch === QUOTE) inQuote = true;
-      else if (inQuote && ch === QUOTE) inQuote = false;
-      else if (inQuote) out[i] = " ";
-    }
-    return out.join("");
-  }
-
-  /** One line as alternating node groups and arrows. */
   private splitByArrows(line: string): Segment[] {
     const segments: Segment[] = [];
     let remaining = pyStrip(line);
 
     while (remaining !== "") {
-      // Positions come from the MASKED text, the label from the original, or a quoted label would come back blanked.
-      const masked = FlowchartParser.maskQuotes(remaining);
+      const masked = maskQuotes(remaining);
       let best: ArrowMatch | null = null;
 
       const labelled = FlowchartParser.findLabelledArrow(masked);
@@ -583,8 +584,13 @@ class FlowchartParser {
         const span = remaining.slice(labelled.pos, labelled.end);
         const pipeStart = span.indexOf(PIPE);
         const pipeEnd = span.lastIndexOf(PIPE);
-        const label =
-          pipeStart >= 0 && pipeEnd > pipeStart ? stripQuotes(pyStrip(span.slice(pipeStart + 1, pipeEnd))) : labelled.label;
+        let label: string;
+        if (pipeStart >= 0 && pipeEnd > pipeStart) {
+          label = stripQuotes(pyStrip(span.slice(pipeStart + 1, pipeEnd)));
+        } else {
+          const at = masked.indexOf(labelled.label, labelled.pos);
+          label = at >= 0 ? stripQuotes(remaining.slice(at, at + labelled.label.length)) : labelled.label;
+        }
         best = { ...labelled, label };
       }
 
@@ -609,7 +615,7 @@ class FlowchartParser {
           hasArrowEnd: best.hasEnd,
           arrowTypeStart: best.typeStart,
           arrowTypeEnd: best.typeEnd,
-          label: best.label,
+          label: decodeEntities(lineBreaks(best.label)),
           minLength: best.length,
         })
       );
@@ -620,20 +626,19 @@ class FlowchartParser {
     return segments.length > 0 ? segments : [makeSegment({ text: pyStrip(line) })];
   }
 
-  /** An arrow carrying a label, either between pipes or between its two halves. */
   private static findLabelledArrow(text: string): ArrowMatch | null {
     const piped = PIPED_ARROW.exec(text);
     if (piped !== null) {
       const whole = piped[0] as string;
       const arrowPart = text.slice(piped.index, piped.index + whole.indexOf(PIPE));
-      const { style, hasStart, hasEnd, typeStart, typeEnd } = FlowchartParser.classifyArrow(`${arrowPart}>`);
+      const { style, hasStart, hasEnd, typeStart, typeEnd } = FlowchartParser.classifyArrow(arrowPart);
       return {
         pos: piped.index,
         end: piped.index + whole.length,
         style,
         hasStart,
         hasEnd,
-        label: pyStrip((piped[5] as string)),
+        label: pyStrip(piped[5] as string),
         length: computeArrowLength(arrowPart, style),
         typeStart,
         typeEnd,
@@ -649,8 +654,8 @@ class FlowchartParser {
         style,
         hasStart,
         hasEnd,
-        label: pyStrip((m[2] as string)),
-        length: computeArrowLength((m[1] as string) + (m[3] as string), style),
+        label: pyStrip(m[2] as string),
+        length: computeArrowLength(m[3] as string, style),
         typeStart: ArrowType.ARROW,
         typeEnd: ArrowType.ARROW,
       };
@@ -658,7 +663,6 @@ class FlowchartParser {
     return null;
   }
 
-  /** The first plain arrow, the earliest position winning over the more specific pattern. */
   private static findPlainArrow(text: string): ArrowMatch | null {
     let best: ArrowMatch | null = null;
     for (const { re, style, hasStart, hasEnd, typeStart, typeEnd } of PLAIN_ARROWS) {
@@ -680,7 +684,6 @@ class FlowchartParser {
     return { ...best, length: computeArrowLength(text.slice(best.pos, best.end), best.style) };
   }
 
-  /** What an arrow string says about itself: its style, whether each end carries a head, and which head. */
   private static classifyArrow(arrow: string): {
     style: EdgeStyle;
     hasStart: boolean;
@@ -704,13 +707,12 @@ class FlowchartParser {
     return { style: EdgeStyle.SOLID, hasStart, hasEnd, typeStart, typeEnd };
   }
 
-  /** One node declaration: `A`, `A[label]`, `A{label}`, `A@{shape: diamond}`, with an optional `:::class`. */
   private parseNode(raw: string): Node | null {
     if (raw === "") return null;
     let text = stripChars(pyStrip(raw), SEMICOLON, false, true);
 
     let styleClass: string | null = null;
-    const classAt = text.lastIndexOf(STYLE_CLASS_MARK);
+    const classAt = maskQuotes(text).lastIndexOf(STYLE_CLASS_MARK);
     if (classAt !== -1) {
       styleClass = pyStrip(text.slice(classAt + STYLE_CLASS_MARK.length));
       text = pyStrip(text.slice(0, classAt));
@@ -721,22 +723,25 @@ class FlowchartParser {
       const id = at[1] as string;
       const props = parseAtShapeProps(at[2] as string);
       const shape = AT_SHAPE_MAP.get(props.get("shape") ?? "rect") ?? NodeShape.RECTANGLE;
+      const label = decodeEntities(nodeLineBreaks(props.get("label") ?? id));
       this.shapedNodeIds.add(id);
-      return makeNode(id, props.get("label") ?? id, { shape, styleClass });
+      return makeNode(id, label, { shape, styleClass });
     }
 
+    const masked = maskQuotes(text);
     for (const [open, close, shape] of SHAPE_PATTERNS) {
-      const idx = text.indexOf(open);
-      if (idx <= 0 || insideQuotes(text, idx)) continue;
+      const idx = masked.indexOf(open);
+      if (idx <= 0) continue;
       const rest = text.slice(idx + open.length);
       if (!rest.endsWith(close)) continue;
       const id = pyStrip(text.slice(0, idx));
-      if (id === "") continue;
+      if (id === "" || DELIM_IN_ID_RE.test(id)) continue;
       const rawLabel = pyStrip(rest.slice(0, -close.length));
       this.shapedNodeIds.add(id);
       const md = parseMarkdownLabel(rawLabel);
       if (md !== null) return makeNode(id, md.plain, { shape, styleClass, labelSegments: md.segments });
-      return makeNode(id, stripQuotes(rawLabel), { shape, styleClass });
+      const label = decodeEntities(nodeLineBreaks(stripQuotes(rawLabel)));
+      return makeNode(id, label, { shape, styleClass });
     }
 
     let id = pyStrip(text);
@@ -752,13 +757,9 @@ export function parseFlowchart(text: string): Graph {
   return new FlowchartParser(text).parse();
 }
 
-/**
- * Whether this text DECLARES the flowchart header, read the way parse() reads it: the first word of the first
- * effective line, comments and blanks skipped. Exported for the dispatch's `declaredType`, since the header words are
- * this parser's own; the parser itself never asks, drawing headerless text being the reference's behaviour.
- */
 export function declaresFlowchart(text: string): boolean {
   for (const raw of text.split("\n")) {
+    if (lstrip(raw).startsWith(COMMENT)) continue;
     const line = pyStrip(stripComments(raw));
     if (line === "") continue;
     return HEADER_KEYWORDS.includes((words(line)[0] ?? "").toLowerCase());

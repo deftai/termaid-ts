@@ -11,6 +11,7 @@ import {
   type Relationship,
 } from "../model/erdiagram.ts";
 import { PY_WORD, pyRepr, pyStrip, stripChars } from "../pycompat.ts";
+import { lineBreaks } from "../utils.ts";
 
 const W = PY_WORD;
 const FRONTMATTER_RE = /^---\s*\n[\s\S]*?\n---\s*\n/;
@@ -121,7 +122,7 @@ export function parseERDiagram(text: string): ERDiagram {
           card1: symbols[3] as string,
           card2: symbols[5] as string,
           lineStyle: styleOf(symbols[4] as string),
-          label: stripChars(pyStrip((symbols[8] as string)), QUOTE),
+          label: lineBreaks(stripChars(pyStrip(symbols[8] as string), QUOTE), " "),
         })
       );
       continue;
@@ -143,7 +144,7 @@ export function parseERDiagram(text: string): ERDiagram {
             card1,
             card2,
             lineStyle: styleOf(line),
-            label: stripChars(pyStrip((words[8] as string)), QUOTE),
+            label: lineBreaks(stripChars(pyStrip(words[8] as string), QUOTE), " "),
           })
         );
         continue;

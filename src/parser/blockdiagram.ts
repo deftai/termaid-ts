@@ -52,6 +52,18 @@ const OPENERS = "([{";
 const CLOSERS = ")]}";
 const QUOTE = '"';
 const DEFAULT_SPAN = 1;
+const MAX_COLUMNS = 64;
+
+function capGrid(blocks: Block[], columns: number): number {
+  for (const block of blocks) {
+    block.colSpan = Math.min(block.colSpan, MAX_COLUMNS);
+  }
+  const totalSpan = blocks.reduce((sum, b) => sum + b.colSpan, 0);
+  if (columns <= 0 && totalSpan > MAX_COLUMNS) {
+    return MAX_COLUMNS;
+  }
+  return Math.min(columns, MAX_COLUMNS);
+}
 
 /** What a `&nbsp;` and its kind stand for, which mermaid authors write inside a block arrow's label. */
 const ENTITIES: ReadonlyArray<readonly [string, string]> = [
@@ -115,7 +127,7 @@ class BlockParser {
       const line = this.lines[i] as string;
       const lower = pyStrip(line.toLowerCase());
 
-      if (lower === END) return { blocks, links, columns, next: i + 1 };
+      if (lower === END) return { blocks, links, columns: capGrid(blocks, columns), next: i + 1 };
 
       if (DIRECTIVES.some((directive) => lower.startsWith(directive))) {
         i += 1;
@@ -185,7 +197,7 @@ class BlockParser {
       i += 1;
     }
 
-    return { blocks, links, columns, next: i };
+    return { blocks, links, columns: capGrid(blocks, columns), next: i };
   }
 
   /** One token: a space, a block arrow, a shaped block, or a bare id, each of which may carry a column span. */
