@@ -5,11 +5,11 @@
 
 import { ArrowType, Direction, EdgeStyle, type Graph } from "../graph/model.ts";
 import { NodeShape } from "../graph/shapes.ts";
-import { computeLayout, type GridLayout } from "../layout/grid.ts";
-import { routeEdges, type RoutedEdge } from "../routing/router.ts";
+import { type GridLayout } from "../layout/grid.ts";
+import { layoutAndRoute, type RoutedEdge } from "../routing/router.ts";
 import { displayWidth, truncateToWidth } from "../utils.ts";
 import { Canvas } from "./canvas.ts";
-import { ASCII, UNICODE, type CharSet } from "./charset.ts";
+import { ARROW_STYLES, ASCII, UNICODE, defaultCharset, type CharSet } from "./charset.ts";
 import { drawRectangle, SHAPE_RENDERERS } from "./shapes.ts";
 
 /** Style keys the theme paints from. */
@@ -33,6 +33,8 @@ const CANVAS_MARGIN = 4;
 const CELL_MARGIN = 2;
 /** How far a label may be pushed off its segment before the placement is given up. */
 const LABEL_SEARCH = 4;
+/** Minimum column gap between two labels sharing the same row. */
+const LABEL_GAP = 3;
 /** A label sits beside a vertical segment only where the segment is at least this long. */
 const MIN_VERTICAL_SEGMENT = 2;
 
@@ -42,6 +44,9 @@ export interface RenderOptions {
   paddingY: number;
   roundedEdges: boolean;
   gap: number;
+  inlineEdgeLabels: boolean;
+  maxLabelWidth: number | null;
+  cs: CharSet | null;
   divergences: boolean;
 }
 
@@ -51,12 +56,20 @@ export const DEFAULT_RENDER: RenderOptions = {
   paddingY: 2,
   roundedEdges: true,
   gap: 4,
+  inlineEdgeLabels: false,
+  maxLabelWidth: null,
+  cs: null,
   divergences: false,
 };
 
 type Point = readonly [number, number];
-/** A label already on the canvas: its row, and the columns it took. */
+/** A label already on the canvas: its row, and the columns `[colStart, colEnd)` it took. */
 type PlacedLabel = readonly [number, number, number];
+
+interface LabelRules {
+  readonly mayCover: ReadonlySet<string> | null;
+  readonly shareRows: boolean;
+}
 
 const sign = (n: number): number => (n === 0 ? 0 : n > 0 ? 1 : -1);
 
@@ -66,12 +79,22 @@ export function renderGraph(graph: Graph, options: Partial<RenderOptions> = {}):
   return canvas === null ? "" : canvas.toString();
 }
 
-/** The same drawing as a CANVAS, which is what a theme needs: every cell still carries its style key. */
+/** The same drawing as a Canvas, which is what a theme or styled output needs. */
 export function renderGraphCanvas(graph: Graph, options: Partial<RenderOptions> = {}): Canvas | null {
-  const { useAscii, paddingX, paddingY, roundedEdges, gap, divergences } = { ...DEFAULT_RENDER, ...options };
+  const {
+    useAscii,
+    paddingX,
+    paddingY,
+    roundedEdges,
+    gap,
+    inlineEdgeLabels,
+    maxLabelWidth,
+    cs: givenCharset,
+    divergences,
+  } = { ...DEFAULT_RENDER, ...options };
   if (graph.nodeOrder.length === 0) return null;
 
-  const cs = useAscii ? ASCII : UNICODE;
+  const cs = givenCharset ?? defaultCharset(useAscii);
 
   // A graph running up or leftwards is laid out the ordinary way and the finished canvas is flipped.
   const direction = graph.direction;
@@ -80,8 +103,7 @@ export function renderGraphCanvas(graph: Graph, options: Partial<RenderOptions> 
   if (flipV) graph.direction = Direction.TB;
   else if (flipH) graph.direction = Direction.LR;
 
-  const layout = computeLayout(graph, { paddingX, paddingY, gap });
-  const routed = routeEdges(graph, layout);
+  const [layout, routed] = layoutAndRoute(graph, paddingX, paddingY, gap, maxLabelWidth);
 
   let width = layout.canvasWidth + CANVAS_MARGIN;
   let height = layout.canvasHeight + CANVAS_MARGIN;
@@ -95,7 +117,7 @@ export function renderGraphCanvas(graph: Graph, options: Partial<RenderOptions> 
 
   drawSubgraphBorders(canvas, layout, cs);
   drawNodes(canvas, graph, layout, cs);
-  drawEdges(canvas, graph, routed, cs, roundedEdges, divergences);
+  drawEdges(canvas, graph, routed, cs, roundedEdges, inlineEdgeLabels, divergences);
   drawSubgraphLabels(canvas, layout);
   drawNotes(canvas, graph, layout, cs);
 
@@ -258,40 +280,62 @@ function drawBoxStart(canvas: Canvas, at: Point, next: Point, cs: CharSet): void
   canvas.put(at[1], at[0], tee);
 }
 
-/** A row already carrying a label takes no other: two labels on one line read as one. */
-const labelOverlaps = (row: number, placed: PlacedLabel[]): boolean => placed.some(([r]) => r === row);
+function blockWidth(lines: readonly string[]): number {
+  return Math.max(...lines.map(displayWidth));
+}
+
+function pathCells(path: ReadonlyArray<Point>): Set<string> {
+  const cells = new Set<string>();
+  for (let i = 0; i < path.length - 1; i++) {
+    const [x1, y1] = path[i] as Point;
+    const [x2, y2] = path[i + 1] as Point;
+    for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
+      for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) {
+        cells.add(`${x},${y}`);
+      }
+    }
+  }
+  return cells;
+}
+
+function labelOverlaps(
+  row: number,
+  colStart: number,
+  colEnd: number,
+  placed: PlacedLabel[],
+  shareRows = false
+): boolean {
+  for (const [pr, ps, pe] of placed) {
+    if (pr !== row) continue;
+    if (!shareRows || (colStart < pe + LABEL_GAP && colEnd + LABEL_GAP > ps)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * ◉ Both charsets, a cell holding whichever one wrote it. A rule may be written over, but an arrowhead is the only
  * mark that an edge ARRIVES anywhere: written over, the edge leaves the drawing.
  */
-const ARROWHEADS: ReadonlySet<string> = new Set(
-  [UNICODE, ASCII].flatMap((set) => [set.arrowRight, set.arrowLeft, set.arrowDown, set.arrowUp])
-);
+const ARROWHEADS: ReadonlySet<string> = new Set([
+  ...[UNICODE, ASCII].flatMap((set) => [set.arrowRight, set.arrowLeft, set.arrowDown, set.arrowUp]),
+  ...Object.values(ARROW_STYLES).flat(),
+]);
 
 const blocksLabel = (canvas: Canvas, row: number, col: number): boolean =>
   canvas.isProtected(row, col) || ARROWHEADS.has(canvas.get(row, col));
 
-/**
- * ◉ Whether a label may be written from here without landing on anything already drawn. `put` DROPS a character that
- * would fall on a protected cell and writes straight over one that is merely occupied, so a placement that is not
- * clear either loses its tail without a word or lands inside the box next door. Measured 2026-08-17 on two
- * transitions between the same pair of states: `Cobalt` came out `Cobalt` cut to `Coba` against a box border, and its
- * sibling was drawn INSIDE the neighbouring node. The reference does both; a label that lies is not worth reproducing.
- */
+/** ◉ Whether a label may be written from here without landing inside a protected box or on an arrowhead. */
 function labelFits(canvas: Canvas, row: number, col: number, label: string): boolean {
   if (row < 0 || col < 0) return false;
-  // Past an edge the canvas is grown into blank cells, so only what already exists can be in the way.
   if (row >= canvas.height) return true;
   const end = Math.min(col + displayWidth(label), canvas.width);
-  // PROTECTED and not merely occupied: a node's whole block is protected, which is both the border a label used to be
-  // cut against and the interior it used to be written into. A subgraph border is not, and the reference writes over
-  // one to keep a label whole, which costs a rule character and reads far better than moving the label away.
   for (let c = col; c < end; c++) if (blocksLabel(canvas, row, c)) return false;
   return true;
 }
 
-/** The label cut to the free run starting here, ending in an ellipsis where anything had to go. */
+/** ◉ The label cut to the free run starting here, ending in an ellipsis where anything had to go. */
 function fittedLabel(canvas: Canvas, row: number, col: number, label: string): string {
   if (labelFits(canvas, row, col, label)) return label;
   let free = 0;
@@ -300,30 +344,56 @@ function fittedLabel(canvas: Canvas, row: number, col: number, label: string): s
   return truncateToWidth(label, free, ELLIPSIS);
 }
 
+function placeLabel(
+  canvas: Canvas,
+  row: number,
+  col: number,
+  lines: readonly string[],
+  placed: PlacedLabel[],
+  mayCover: ReadonlySet<string> | null = null,
+  divergences = false
+): boolean {
+  const colEnd = col + blockWidth(lines);
+  if (col < 0 || row < 0) return false;
+  const strict = lines.length > 1 && mayCover !== null;
+  for (let targetRow = row; targetRow < row + lines.length; targetRow++) {
+    for (let targetCol = col; targetCol < colEnd; targetCol++) {
+      if (divergences && blocksLabel(canvas, targetRow, targetCol)) return false;
+      if (canvas.get(targetRow, targetCol) === " ") continue;
+      if (strict || canvas.isProtected(targetRow, targetCol)) return false;
+      if (mayCover !== null && !mayCover.has(`${targetCol},${targetRow}`)) return false;
+    }
+  }
+  const neededWidth = colEnd + 1;
+  const neededHeight = row + lines.length;
+  if (neededWidth > canvas.width || neededHeight > canvas.height) {
+    canvas.resize(Math.max(canvas.width, neededWidth), Math.max(canvas.height, neededHeight));
+  }
+  for (let i = 0; i < lines.length; i++) {
+    canvas.putText(row + i, col, lines[i] as string, STYLE_EDGE_LABEL, true);
+    placed.push([row + i, col, colEnd]);
+  }
+  return true;
+}
+
 function tryPlaceLabel(
   canvas: Canvas,
   row: number,
   col: number,
-  label: string,
+  lines: readonly string[],
   placed: PlacedLabel[],
+  rules: LabelRules,
   divergences: boolean
 ): boolean {
-  const colEnd = col + displayWidth(label);
-  if (col < 0 || row < 0) return false;
-  if (labelOverlaps(row, placed)) return false;
-  if (divergences && !labelFits(canvas, row, col, label)) return false;
-  const neededWidth = colEnd + 1;
-  const neededHeight = row + 1;
-  if (neededWidth > canvas.width || neededHeight > canvas.height) {
-    canvas.resize(Math.max(canvas.width, neededWidth), Math.max(canvas.height, neededHeight));
+  const colEnd = col + blockWidth(lines);
+  for (let r = row; r < row + lines.length; r++) {
+    if (labelOverlaps(r, col, colEnd, placed, rules.shareRows)) return false;
   }
-  canvas.putText(row, col, label, STYLE_EDGE_LABEL);
-  placed.push([row, col, colEnd]);
-  return true;
+  return placeLabel(canvas, row, col, lines, placed, rules.mayCover, divergences);
 }
 
 /** The last turn in a path, or -1 for a path that runs straight. */
-function findLastTurn(path: Array<[number, number]>): number {
+function findLastTurn(path: ReadonlyArray<Point>): number {
   for (let i = path.length - 2; i > 0; i--) {
     const prev = path[i - 1] as Point;
     const current = path[i] as Point;
@@ -338,27 +408,31 @@ function findLastTurn(path: Array<[number, number]>): number {
   return -1;
 }
 
-/** A label placed against one segment: beside a vertical run, above or below a horizontal one. */
+/** A label placed against one segment: beside a vertical run, above or below (or inline on) a horizontal one. */
 function tryPlaceOnSegment(
   canvas: Canvas,
   x1: number,
   y1: number,
   x2: number,
   y2: number,
-  label: string,
+  lines: readonly string[],
   placed: PlacedLabel[],
   prev: Point | null,
   preferLeft: boolean,
   biasTarget: boolean,
+  inline: boolean,
+  useAscii: boolean,
+  leaderChar: string,
+  rules: LabelRules,
   divergences: boolean
 ): boolean {
-  const labelLength = displayWidth(label);
+  const labelLen = blockWidth(lines);
+  const labelRows = lines.length;
 
   if (x1 === x2 && Math.abs(y2 - y1) >= MIN_VERTICAL_SEGMENT) {
     const low = Math.min(y1, y2);
     const high = Math.max(y1, y2);
-    // Two thirds of the way to the target, or the middle of the run.
-    const midY = biasTarget ? y1 + Math.trunc(((y2 - y1) * 2) / 3) : Math.floor((low + high) / 2);
+    const midY = biasTarget ? y1 + Math.floor(((y2 - y1) * 2) / 3) : Math.floor((low + high) / 2);
 
     let left = preferLeft;
     if (!left && prev !== null) {
@@ -367,33 +441,61 @@ function tryPlaceOnSegment(
       if (py === y1 && px !== x1) left = px > x1;
     }
 
+    if (inline) {
+      const label = lines[0] as string;
+      const rightLabel = useAscii ? `+-${label}` : `├${leaderChar}${label}`;
+      const leftLabel = useAscii ? `${label}-+` : `${label}${leaderChar}┤`;
+      const sides: Array<[number, number, string[]]> = [
+        [midY, x1, [rightLabel]],
+        [midY, x1 - displayWidth(leftLabel) + 1, [leftLabel]],
+      ];
+      if (left) sides.reverse();
+
+      for (const [row, col, anchored] of sides) {
+        if (tryPlaceLabel(canvas, row, col, anchored, placed, rules, divergences)) return true;
+      }
+      for (let offset = 1; offset < LABEL_SEARCH; offset++) {
+        for (const [row, col, anchored] of sides) {
+          if (tryPlaceLabel(canvas, row - offset, col, anchored, placed, rules, divergences)) return true;
+          if (tryPlaceLabel(canvas, row + offset, col, anchored, placed, rules, divergences)) return true;
+        }
+      }
+      return false;
+    }
+
+    const top = Math.max(low + 1, midY - Math.floor(labelRows / 2));
     const sides: Array<[number, number]> = left
       ? [
-          [midY, x1 - labelLength],
-          [midY, x1 + 1],
+          [top, x1 - labelLen],
+          [top, x1 + 1],
         ]
       : [
-          [midY, x1 + 1],
-          [midY, x1 - labelLength],
+          [top, x1 + 1],
+          [top, x1 - labelLen],
         ];
 
-    for (const [row, col] of sides) if (tryPlaceLabel(canvas, row, col, label, placed, divergences)) return true;
+    for (const [row, col] of sides) {
+      if (tryPlaceLabel(canvas, row, col, lines, placed, rules, divergences)) return true;
+    }
     for (let offset = 1; offset < LABEL_SEARCH; offset++) {
       for (const [row, col] of sides) {
-        if (tryPlaceLabel(canvas, row - offset, col, label, placed, divergences)) return true;
-        if (tryPlaceLabel(canvas, row + offset, col, label, placed, divergences)) return true;
+        if (tryPlaceLabel(canvas, row - offset, col, lines, placed, rules, divergences)) return true;
+        if (tryPlaceLabel(canvas, row + offset, col, lines, placed, rules, divergences)) return true;
       }
     }
     return false;
   }
 
   if (y1 === y2) {
-    const length = Math.abs(x2 - x1);
-    if (length >= labelLength + 2) {
+    const segLen = Math.abs(x2 - x1);
+    if (segLen >= labelLen + 2) {
       const mid = Math.floor((Math.min(x1, x2) + Math.max(x1, x2)) / 2);
-      const start = mid - Math.floor(labelLength / 2);
-      if (tryPlaceLabel(canvas, y1 - 1, start, label, placed, divergences)) return true;
-      if (tryPlaceLabel(canvas, y1 + 1, start, label, placed, divergences)) return true;
+      const start = mid - Math.floor(labelLen / 2);
+      if (inline) {
+        return tryPlaceLabel(canvas, y1, start, lines, placed, rules, divergences);
+      }
+      if (tryPlaceLabel(canvas, y1 - labelRows, start, lines, placed, rules, divergences)) return true;
+      if (tryPlaceLabel(canvas, y1 + 1, start, lines, placed, rules, divergences)) return true;
       return false;
     }
   }
@@ -405,65 +507,101 @@ function tryPlaceOnSegment(
  * A label on the best segment of its path: after the LAST TURN first, since that stretch belongs to this edge alone
  * and the trunk before it may be shared with its siblings.
  */
-function drawEdgeLabel(canvas: Canvas, re: RoutedEdge, placed: PlacedLabel[], divergences: boolean): void {
-  const label = re.label;
-  if (label === "") return;
+function drawEdgeLabel(
+  canvas: Canvas,
+  re: RoutedEdge,
+  placed: PlacedLabel[],
+  inline: boolean,
+  cs: CharSet,
+  divergences: boolean
+): void {
+  if (re.label === "") return;
+  const lines = re.label.split("\n");
+  const useInline = inline && lines.length === 1;
+
   const path = re.drawPath;
-  const segments = path.length - 1;
-  if (segments <= 0) return;
+  const leaderChar = edgeLineChars(re.edge.style, cs)[0];
+  const nSegs = path.length - 1;
+  if (nSegs <= 0) return;
 
   const lastTurn = findLastTurn(path);
-  const order: number[] = [];
+  const preferred: number[] = [];
+  const remaining: number[] = [];
   if (lastTurn >= 0) {
-    for (let i = lastTurn; i < segments; i++) order.push(i);
-    for (let i = lastTurn - 1; i >= 0; i--) order.push(i);
+    for (let i = lastTurn; i < nSegs; i++) preferred.push(i);
+    for (let i = lastTurn - 1; i >= 0; i--) remaining.push(i);
   } else {
-    for (let i = 0; i < segments; i++) order.push(i);
+    for (let i = 0; i < nSegs; i++) remaining.push(i);
   }
 
-  // A straight path takes the left side and sits closer to its target, clear of where a sibling's turn lands.
-  const straight = lastTurn < 0;
+  const isStraight = lastTurn < 0;
+  const own = pathCells(path);
+  const rulePasses: LabelRules[] = [
+    { mayCover: own, shareRows: false },
+    { mayCover: own, shareRows: true },
+    { mayCover: null, shareRows: false },
+  ];
+  const order = [...preferred, ...remaining];
 
-  for (const i of order) {
-    const [x1, y1] = path[i] as Point;
-    const [x2, y2] = path[i + 1] as Point;
-    const prev = i > 0 ? (path[i - 1] as Point) : null;
-    if (tryPlaceOnSegment(canvas, x1, y1, x2, y2, label, placed, prev, straight, straight, divergences)) return;
+  for (const rules of rulePasses) {
+    for (const i of order) {
+      const [x1, y1] = path[i] as Point;
+      const [x2, y2] = path[i + 1] as Point;
+      const prev = i > 0 ? (path[i - 1] as Point) : null;
+      if (
+        tryPlaceOnSegment(
+          canvas,
+          x1,
+          y1,
+          x2,
+          y2,
+          lines,
+          placed,
+          prev,
+          isStraight,
+          isStraight,
+          useInline,
+          cs === ASCII,
+          leaderChar,
+          rules,
+          divergences
+        )
+      ) {
+        return;
+      }
+    }
+  }
+
+  if (useInline) {
+    drawEdgeLabel(canvas, re, placed, false, cs, divergences);
+    return;
   }
 
   const [mx, my] = path[Math.floor(path.length / 2)] as Point;
   if (!divergences) {
-    const row = Math.max(0, my - 1);
-    const col = mx + 1;
-    const colEnd = col + displayWidth(label);
-    const neededWidth = colEnd + 1;
-    const neededHeight = row + 1;
-    if (neededWidth > canvas.width || neededHeight > canvas.height) {
-      canvas.resize(Math.max(canvas.width, neededWidth), Math.max(canvas.height, neededHeight));
-    }
-    canvas.putText(row, col, label, STYLE_EDGE_LABEL);
-    placed.push([row, col, colEnd]);
+    placeLabel(canvas, my - lines.length, mx + 1, lines, placed, null, false);
     return;
   }
 
   // ◉ When `divergences: true`, never land inside a node box or on an arrowhead, and mark truncations with `…`.
   const col = mx + 1;
-  const rows: number[] = [my - 1];
-  for (let off = 1; off <= LABEL_SEARCH; off++) rows.push(my - 1 - off, my - 1 + off);
+  const baseRow = my - lines.length;
+  const rows: number[] = [baseRow];
+  for (let off = 1; off <= LABEL_SEARCH; off++) rows.push(baseRow - off, baseRow + off);
 
   for (const row of rows) {
-    if (row < 0 || labelOverlaps(row, placed) || !labelFits(canvas, row, col, label)) continue;
-    canvas.putText(row, col, label, STYLE_EDGE_LABEL);
-    placed.push([row, col, col + displayWidth(label)]);
-    return;
+    if (tryPlaceLabel(canvas, row, col, lines, placed, { mayCover: null, shareRows: false }, true)) return;
   }
-  for (const row of rows) {
-    if (row < 0 || labelOverlaps(row, placed)) continue;
-    const shown = fittedLabel(canvas, row, col, label);
-    if (shown === "") continue;
-    canvas.putText(row, col, shown, STYLE_EDGE_LABEL);
-    placed.push([row, col, col + displayWidth(shown)]);
-    return;
+  if (lines.length === 1) {
+    const single = lines[0] as string;
+    for (const row of rows) {
+      if (row < 0 || labelOverlaps(row, col, col + displayWidth(single), placed, false)) continue;
+      const shown = fittedLabel(canvas, row, col, single);
+      if (shown === "") continue;
+      canvas.putText(row, col, shown, STYLE_EDGE_LABEL, true);
+      placed.push([row, col, col + displayWidth(shown)]);
+      return;
+    }
   }
 }
 
@@ -477,6 +615,7 @@ function drawEdges(
   routed: RoutedEdge[],
   cs: CharSet,
   rounded: boolean,
+  inlineEdgeLabels: boolean,
   divergences: boolean
 ): void {
   for (const re of routed) {
@@ -542,7 +681,9 @@ function drawEdges(
 
   const placed: PlacedLabel[] = [];
   for (const re of routed) {
-    if (re.label !== "" && re.drawPath.length >= 2) drawEdgeLabel(canvas, re, placed, divergences);
+    if (re.label !== "" && re.drawPath.length >= 2) {
+      drawEdgeLabel(canvas, re, placed, inlineEdgeLabels, cs, divergences);
+    }
   }
 }
 
