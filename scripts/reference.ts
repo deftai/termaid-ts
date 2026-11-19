@@ -1,7 +1,4 @@
-// WHAT this port is judged against: the Python termaid itself, fetched from PyPI and pinned to a version.
-//
-// The Python and not a compiled build of it, because the compiled build was only ever an intermediary: measured, the
-// two draw the same bytes for all 276 takes, and only one of them is the thing this port claims to reproduce.
+// WHAT this port is judged against: the Python termaid pinned to the commit Console vendors.
 //
 // `uvx` belongs to the machine running a check, never to this package: nothing here is a dependency, a consumer
 // installs none of it, and the reference is fetched and cached the first time a harness asks for it.
@@ -16,12 +13,18 @@ const FROM_FLAG = "--from";
 const DISTRIBUTION = "termaid[rich]";
 const COMMAND = "termaid";
 
+export const REFERENCE_REPO = "https://github.com/deftai/termaid";
+export const REFERENCE_COMMIT = "0f2fb37f5cb65a75a778b298480d2fc2b306f634";
+
 /**
- * The reference version every frozen take belongs to. Its OWN fact and not this package's, which only happens to carry
- * the same number today: bumping it means re-running the oracle, and `fixtures/expected/reference.txt` is what records
- * which version answered.
+ * The version string reported by `termaid --version` at `REFERENCE_COMMIT`.
  */
-export const REFERENCE_VERSION = "0.8.0";
+export const REFERENCE_VERSION = "0.12.0";
+
+/**
+ * The full `uvx --from` package specification for the pinned git commit.
+ */
+export const REFERENCE_SPEC = `${DISTRIBUTION} @ git+${REFERENCE_REPO}@${REFERENCE_COMMIT}`;
 
 /** What a spawn runs. */
 export const REFERENCE_COMMAND = RUNNER;
@@ -29,7 +32,7 @@ export const REFERENCE_COMMAND = RUNNER;
 /** What must sit in FRONT of the reference's own flags, since the runner is asked for a tool before the tool is asked. */
 export const REFERENCE_ARGV: readonly string[] = [
   FROM_FLAG,
-  `${DISTRIBUTION}==${REFERENCE_VERSION}`,
+  REFERENCE_SPEC,
   COMMAND,
 ];
 
