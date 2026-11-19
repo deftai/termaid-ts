@@ -63,7 +63,7 @@ let checked = 0;
 
 function spawned(argv: readonly string[], input: string, colour: boolean): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const env = colour ? { ...process.env, FORCE_COLOR: "1" } : process.env;
+    const env = colour ? { ...process.env, FORCE_COLOR: "1", TERM: "xterm-256color" } : process.env;
     const child = execFile(REFERENCE_COMMAND, referenceArgs(argv), { encoding: "utf8", env, maxBuffer: Number.MAX_SAFE_INTEGER },
       (_e, stdout, stderr) => resolve({ stdout, stderr }));
     child.stdin?.end(input);

@@ -62,8 +62,8 @@ const GAP_FLAG = "--gap";
 const PADDING_X_FLAG = "--padding-x";
 const PADDING_Y_FLAG = "--padding-y";
 const SHARP_FLAG = "--sharp-edges";
-/** What turns the colour on: the reference writes to a pipe here, and paints nothing unless told. */
-const COLOUR_ENV = { FORCE_COLOR: "1" } as const;
+/** What turns the colour on: the reference writes to a pipe here, and Rich silences colour when TERM=dumb. */
+const COLOUR_ENV = { FORCE_COLOR: "1", TERM: "xterm-256color" } as const;
 
 function argvOf(profile: Profile): string[] {
   const argv = [WIDTH_FLAG, String(profile.width)];

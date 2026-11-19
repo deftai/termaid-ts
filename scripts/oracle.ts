@@ -7,10 +7,11 @@
 // A fixture must draw the same thing on any day, so a gantt one spans PAST dates alone: today's marker then never
 // falls inside the chart, and the frozen take cannot rot.
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { REFERENCE_COMMAND, referenceArgs } from "./reference.ts";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -25,11 +26,12 @@ const WIDTH_FLAG = "--width";
 const THEME_FLAG = "--theme";
 /** The theme cc-views renders with, so parity is judged on the drawing its users see. */
 const THEME = "neon";
-/** What turns the colour on: the renderer writes to a pipe here, and paints nothing unless told. */
-const COLOUR_ENV = { FORCE_COLOR: "1" };
+/** What turns the colour on: the renderer writes to a pipe here, and Rich silences colour when TERM=dumb. */
+const COLOUR_ENV = { FORCE_COLOR: "1", TERM: "xterm-256color" };
 const VERSION_FLAG = "--version";
 /** The reference's own name for what it drew, kept beside the fixtures: a bump invalidates every byte below. */
 const STAMP = "reference.txt";
+const CONCURRENCY = Math.max(2, os.cpus().length - 2);
 
 /** Where a take lands. The name says everything it depends on, so a stale file is a visible one. */
 export function expectedPath(name: string, width: number, theme: string | null): string {
@@ -46,27 +48,61 @@ export function sources(): string[] {
 
 export const sourcePath = (name: string): string => path.join(FIXTURES, `${name}${SOURCE_EXT}`);
 
-function drawn(source: string, width: number, theme: string | null): string {
+function childEnv(theme: string | null): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = theme === null ? { ...process.env } : { ...process.env, ...COLOUR_ENV };
+  delete env["NO_COLOR"];
+  return env;
+}
+
+function drawn(source: string, width: number, theme: string | null): Promise<string> {
   const args = [WIDTH_FLAG, String(width), ...(theme === null ? [] : [THEME_FLAG, theme])];
-  return execFileSync(REFERENCE_COMMAND, referenceArgs(args), {
-    input: source,
-    encoding: "utf8",
-    env: theme === null ? process.env : { ...process.env, ...COLOUR_ENV },
-    stdio: ["pipe", "pipe", "pipe"],
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      REFERENCE_COMMAND,
+      referenceArgs(args),
+      {
+        encoding: "utf8",
+        env: childEnv(theme),
+        maxBuffer: Number.MAX_SAFE_INTEGER,
+      },
+      (error, stdout, stderr) => {
+        if (error !== null) {
+          reject(new Error(`oracle failed (${args.join(" ")}): ${stderr || error.message}`));
+          return;
+        }
+        resolve(stdout);
+      }
+    );
+    child.stdin?.end(source);
   });
 }
 
-fs.mkdirSync(EXPECTED, { recursive: true });
-let written = 0;
-for (const name of sources()) {
-  const source = fs.readFileSync(sourcePath(name), "utf8");
-  for (const width of WIDTHS) {
-    for (const theme of [null, THEME]) {
-      fs.writeFileSync(expectedPath(name, width, theme), drawn(source, width, theme));
-      written++;
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  fs.mkdirSync(EXPECTED, { recursive: true });
+  const tasks: Array<() => Promise<void>> = [];
+  for (const name of sources()) {
+    const source = fs.readFileSync(sourcePath(name), "utf8");
+    for (const width of WIDTHS) {
+      for (const theme of [null, THEME]) {
+        tasks.push(async () => {
+          const out = await drawn(source, width, theme);
+          fs.writeFileSync(expectedPath(name, width, theme), out);
+        });
+      }
     }
   }
+
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, tasks.length) }, async () => {
+      while (next < tasks.length) {
+        const idx = next++;
+        await (tasks[idx] as () => Promise<void>)();
+      }
+    })
+  );
+
+  const stamp = execFileSync(REFERENCE_COMMAND, referenceArgs([VERSION_FLAG]), { encoding: "utf8" });
+  fs.writeFileSync(path.join(EXPECTED, STAMP), stamp);
+  console.log(`oracle: ${tasks.length} takes from ${stamp.trim()}`);
 }
-const stamp = execFileSync(REFERENCE_COMMAND, referenceArgs([VERSION_FLAG]), { encoding: "utf8" });
-fs.writeFileSync(path.join(EXPECTED, STAMP), stamp);
-console.log(`oracle: ${written} takes from ${stamp.trim()}`);
