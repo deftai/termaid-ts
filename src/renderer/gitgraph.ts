@@ -5,7 +5,7 @@
 
 import type { Commit, CommitType, GitGraph } from "../model/gitgraph.ts";
 import { Canvas } from "./canvas.ts";
-import { ASCII, UNICODE, type CharSet } from "./charset.ts";
+import { defaultCharset, type CharSet } from "./charset.ts";
 import { displayWidth } from "../utils.ts";
 
 /** The least room between two commit markers, whatever their labels take. */
@@ -59,18 +59,18 @@ function sortedBranches(diagram: GitGraph): string[] {
 
 /** Half of the widest thing written under or over a commit, which is what keeps two of them apart. */
 function footprint(commit: Commit): number {
-  let width = [...commit.id].length;
+  let width = [...commit.label].length;
   if (commit.tag !== "") width = Math.max(width, [...commit.tag].length + TAG_BRACKETS);
   return Math.floor((width + 1) / 2);
 }
 
-export function renderGitGraph(diagram: GitGraph, useAscii = false): Canvas {
-  const cs = useAscii ? ASCII : UNICODE;
+export function renderGitGraph(diagram: GitGraph, useAscii = false, cs: CharSet | null = null): Canvas {
+  const charset = cs ?? defaultCharset(useAscii);
   if (diagram.commits.length === 0) return new Canvas(EMPTY_SIZE, EMPTY_SIZE);
   if (diagram.direction === "TB" || diagram.direction === "BT") {
-    return drawVertical(diagram, useAscii, cs, diagram.direction === "BT");
+    return drawVertical(diagram, useAscii, charset, diagram.direction === "BT");
   }
-  return drawHorizontal(diagram, useAscii, cs);
+  return drawHorizontal(diagram, useAscii, charset);
 }
 
 /** Each commit's own column, spaced so its label never runs into the one before it. */
@@ -159,7 +159,7 @@ function drawHorizontal(diagram: GitGraph, useAscii: boolean, cs: CharSet): Canv
     const column = columns.get(commit.id) as number;
     const row = rows.get(commit.branch) as number;
     canvas.put(row, column, markerOf(commit.type, useAscii), false, STYLE_NODE);
-    canvas.putText(row + 1, column - Math.floor(displayWidth(commit.id) / 2), commit.id, STYLE_LABEL);
+    canvas.putText(row + 1, column - Math.floor(displayWidth(commit.label) / 2), commit.label, STYLE_LABEL);
     if (commit.tag !== "") {
       const tag = tagText(commit.tag);
       canvas.putText(row - 1, column - Math.floor(displayWidth(tag) / 2), tag, STYLE_TAG);
@@ -177,13 +177,22 @@ function drawVertical(diagram: GitGraph, useAscii: boolean, cs: CharSet, bottomT
   let widest = 0;
   for (const name of branches) widest = Math.max(widest, [...name].length);
   for (const commit of diagram.commits) {
-    widest = Math.max(widest, [...commit.id].length);
+    widest = Math.max(widest, [...commit.label].length);
     if (commit.tag !== "") widest = Math.max(widest, [...commit.tag].length + TAG_BRACKETS);
   }
   const columnGap = Math.max(widest + TB_LABEL_ROOM, TB_MIN_COL_GAP);
 
+  const first = branches[0] as string;
+  const firstCommits = byBranch.get(first) ?? [];
+  const firstCol = Math.max(
+    MARGIN,
+    Math.floor([...first].length / 2),
+    ...firstCommits.map((c) => Math.floor([...c.label].length / 2)),
+    ...firstCommits.filter((c) => c.tag !== "").map((c) => Math.floor(displayWidth(tagText(c.tag)) / 2))
+  );
+
   const columns = new Map<string, number>();
-  branches.forEach((name, i) => columns.set(name, MARGIN + i * columnGap));
+  branches.forEach((name, i) => columns.set(name, firstCol + i * columnGap));
 
   const count = diagram.commits.length;
   const rows = new Map<string, number>();
@@ -201,7 +210,7 @@ function drawVertical(diagram: GitGraph, useAscii: boolean, cs: CharSet, bottomT
     diagram.commits.forEach((commit, i) => rows.set(commit.id, top + i * TB_ROW_GAP));
   }
 
-  const canvas = new Canvas(MARGIN + branches.length * columnGap + MARGIN, height);
+  const canvas = new Canvas(firstCol + branches.length * columnGap + MARGIN, height);
 
   const starts = new Map<string, number>();
   const ends = new Map<string, number>();
@@ -262,14 +271,14 @@ function drawVertical(diagram: GitGraph, useAscii: boolean, cs: CharSet, bottomT
     const column = columns.get(commit.branch) as number;
     canvas.put(row, column, markerOf(commit.type, useAscii), false, STYLE_NODE);
 
-    const labelColumn = column - Math.floor([...commit.id].length / 2);
+    const labelColumn = column - Math.floor([...commit.label].length / 2);
     const tag = tagText(commit.tag);
     const tagColumn = column - Math.floor(displayWidth(tag) / 2);
     if (bottomToTop) {
-      canvas.putText(row - 1, labelColumn, commit.id, STYLE_LABEL);
+      canvas.putText(row - 1, labelColumn, commit.label, STYLE_LABEL);
       if (commit.tag !== "") canvas.putText(row + 1, tagColumn, tag, STYLE_TAG);
     } else {
-      canvas.putText(row + 1, labelColumn, commit.id, STYLE_LABEL);
+      canvas.putText(row + 1, labelColumn, commit.label, STYLE_LABEL);
       if (commit.tag !== "") canvas.putText(row - 1, tagColumn, tag, STYLE_TAG);
     }
   }

@@ -7,7 +7,7 @@ import { totalValue, treemapTotal, type Treemap, type TreemapNode } from "../mod
 import { formatG, pyRound } from "../pycompat.ts";
 import { displayWidth, truncateToWidth } from "../utils.ts";
 import { Canvas } from "./canvas.ts";
-import { ASCII, UNICODE, type CharSet } from "./charset.ts";
+import { defaultCharset, type CharSet } from "./charset.ts";
 
 const MIN_BOX_W = 4;
 const MIN_BOX_H = 3;
@@ -31,8 +31,8 @@ const STYLE_LABEL = "label";
 const STYLE_VALUE = "edge_label";
 const ELLIPSIS = "…";
 
-export function renderTreemap(diagram: Treemap, useAscii = false): Canvas {
-  const cs = useAscii ? ASCII : UNICODE;
+export function renderTreemap(diagram: Treemap, useAscii = false, cs: CharSet | null = null): Canvas {
+  const charset = cs ?? defaultCharset(useAscii);
   if (diagram.roots.length === 0) return new Canvas(EMPTY_SIZE, EMPTY_SIZE);
   if (treemapTotal(diagram) <= 0) return new Canvas(EMPTY_SIZE, EMPTY_SIZE);
 
@@ -41,7 +41,7 @@ export function renderTreemap(diagram: Treemap, useAscii = false): Canvas {
   const width = Math.max(minWidth, Math.min(WIDTH_CEILING, Math.max(WIDTH_FLOOR, Math.trunc(minWidth * WIDTH_FACTOR))));
 
   const canvas = new Canvas(width, height);
-  layoutNodes(canvas, cs, diagram.roots, 0, 0, width, height);
+  layoutNodes(canvas, charset, diagram.roots, 0, 0, width, height);
   return canvas;
 }
 
@@ -93,7 +93,9 @@ function sliceLayout(
     gaps = 0;
   }
 
-  const minimums = nodes.map((node) => (node.children.length > 0 ? computeMinWidth(node.children) + 2 : MIN_BOX_W));
+  const minimums = nodes.map((node) =>
+    node.children.length > 0 ? computeMinWidth(node.children) + 2 : Math.max(MIN_BOX_W, displayWidth(node.label) + 2)
+  );
   const sizes = nodes.map((node) => (totalValue(node) / total) * usable);
 
   // A box under its minimum is raised to it, and what it took is charged to the boxes with room to spare.

@@ -5,6 +5,7 @@
 import type { Timeline } from "../model/timeline.ts";
 import { displayWidth } from "../utils.ts";
 import { Canvas } from "./canvas.ts";
+import { defaultCharset, type CharSet } from "./charset.ts";
 
 /** The style keys a theme paints these lines from. */
 const STYLE_LABEL = "label";
@@ -20,7 +21,8 @@ const RIGHT_MARGIN = 1;
 /** A line of the drawing and the style key it carries. */
 type StyledLine = readonly [string, string];
 
-export function renderTimeline(diagram: Timeline, useAscii = false): Canvas {
+export function renderTimeline(diagram: Timeline, useAscii = false, cs: CharSet | null = null): Canvas {
+  void (cs ?? defaultCharset(useAscii));
   if (diagram.sections.length === 0) return new Canvas(EMPTY_SIZE, EMPTY_SIZE);
 
   const vertical = useAscii ? "|" : "│";

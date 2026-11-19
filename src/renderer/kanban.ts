@@ -6,6 +6,7 @@
 import type { Kanban, KanbanColumn } from "../model/kanban.ts";
 import { displayWidth, truncateToWidth } from "../utils.ts";
 import { Canvas } from "./canvas.ts";
+import { defaultCharset, type CharSet } from "./charset.ts";
 
 /** Inset of a card from its column's edges. */
 const COL_PAD = 2;
@@ -29,7 +30,14 @@ const CARD_ROWS = 3;
 const DEEP = ":deep";
 const sectionStyle = (index: number): string => `section:${index}`;
 
-export function renderKanban(diagram: Kanban, useAscii = false, paddingX: number = CARD_PAD, gap: number = COL_GAP): Canvas {
+export function renderKanban(
+  diagram: Kanban,
+  useAscii = false,
+  paddingX: number = CARD_PAD,
+  gap: number = COL_GAP,
+  cs: CharSet | null = null
+): Canvas {
+  void (cs ?? defaultCharset(useAscii));
   if (diagram.columns.length === 0) return new Canvas(EMPTY_SIZE, EMPTY_SIZE);
 
   const widths = diagram.columns.map((col) => {

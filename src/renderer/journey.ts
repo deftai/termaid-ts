@@ -7,6 +7,7 @@ import { DEFAULT_SCORE, type Journey } from "../model/journey.ts";
 import { pySorted } from "../pycompat.ts";
 import { displayWidth } from "../utils.ts";
 import { Canvas } from "./canvas.ts";
+import { defaultCharset, type CharSet } from "./charset.ts";
 
 /** How a score reads: a face per level, and three characters where the terminal has no emoji. */
 const FACE: Record<number, string> = { 1: "😞", 2: "😟", 3: "😐", 4: "😊", 5: "😄" };
@@ -44,7 +45,14 @@ interface Placed {
   section: number;
 }
 
-export function renderJourney(diagram: Journey, useAscii = false, paddingX = 2, gap = 1, rounded = true): Canvas {
+export function renderJourney(
+  diagram: Journey,
+  useAscii = false,
+  paddingX = 2,
+  gap = 1,
+  rounded = true,
+  cs: CharSet | null = null
+): Canvas {
   if (diagram.sections.length === 0) return new Canvas(EMPTY_SIZE, EMPTY_SIZE);
 
   const faces = useAscii ? FACE_ASCII : FACE;
@@ -56,7 +64,8 @@ export function renderJourney(diagram: Journey, useAscii = false, paddingX = 2, 
     : rounded
       ? ["╭", "╮", "╰", "╯"]
       : ["┌", "┐", "└", "┘"];
-  const arrow = useAscii ? ">" : "►";
+  const charset = cs ?? defaultCharset(useAscii);
+  const arrow = charset.arrowRight;
 
   const taskWidth = Math.max(MIN_TASK_WIDTH, paddingX * TASK_WIDTH_FACTOR);
   const actors = new Set<string>();

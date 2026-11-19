@@ -7,7 +7,7 @@ import { NodeShape } from "../graph/shapes.ts";
 import type { Block, BlockDiagram, BlockLink } from "../model/blockdiagram.ts";
 import { displayWidth } from "../utils.ts";
 import { Canvas } from "./canvas.ts";
-import { ASCII, UNICODE, type CharSet } from "./charset.ts";
+import { defaultCharset, type CharSet } from "./charset.ts";
 import { SHAPE_RENDERERS } from "./shapes.ts";
 
 const BLOCK_PAD = 2;
@@ -15,6 +15,7 @@ const MIN_BLOCK_W = 12;
 const MIN_BLOCK_H = 5;
 const COL_GAP = 4;
 const ROW_GAP = 2;
+const MAX_CELLS = 1_000_000;
 const MARGIN = 2;
 /** Blank columns and rows kept inside a group, between its border and its children. */
 const GROUP_PAD = 2;
@@ -45,8 +46,14 @@ const sizeOf = (sizes: Sized, id: string): [number, number] => sizes.get(id) ?? 
 /** How many columns a row of blocks asks for when none was declared. */
 const spanned = (blocks: Block[]): number => blocks.reduce((total, block) => total + block.colSpan, 0);
 
-export function renderBlockDiagram(diagram: BlockDiagram, useAscii = false, paddingX = BLOCK_PAD, gap = COL_GAP): Canvas {
-  const cs = useAscii ? ASCII : UNICODE;
+export function renderBlockDiagram(
+  diagram: BlockDiagram,
+  useAscii = false,
+  paddingX = BLOCK_PAD,
+  gap = COL_GAP,
+  cs: CharSet | null = null
+): Canvas {
+  const charset = cs ?? defaultCharset(useAscii);
   if (diagram.blocks.length === 0) return new Canvas(1, 1);
 
   const columns = diagram.columns > 0 ? diagram.columns : spanned(diagram.blocks);
@@ -68,11 +75,14 @@ export function renderBlockDiagram(diagram: BlockDiagram, useAscii = false, padd
     MIN_CANVAS_H,
     MARGIN * 2 + rowHeights.reduce((a, b) => a + b, 0) + ROW_GAP * Math.max(0, grid.length - 1)
   );
+  if (width * height > MAX_CELLS) {
+    throw new Error(`block diagram is too large to draw (${width} x ${height} characters)`);
+  }
 
   const canvas = new Canvas(width, height);
-  drawGroups(canvas, diagram.blocks, positions, sizes, cs);
-  for (const link of diagram.links) drawLink(canvas, link, positions, sizes, cs, useAscii);
-  drawBlocks(canvas, diagram.blocks, positions, sizes, cs);
+  drawGroups(canvas, diagram.blocks, positions, sizes, charset);
+  for (const link of diagram.links) drawLink(canvas, link, positions, sizes, charset, useAscii);
+  drawBlocks(canvas, diagram.blocks, positions, sizes, charset);
   return canvas;
 }
 
@@ -96,15 +106,13 @@ function layoutGrid(blocks: Block[], columns: number): Grid {
   return grid;
 }
 
-function blockSize(block: Block, paddingX: number, colGap: number): [number, number] {
+function blockSize(block: Block, sizes: Sized, paddingX: number, colGap: number): [number, number] {
   if (block.isSpace) return [MIN_BLOCK_W, MIN_BLOCK_H];
 
   if (block.children.length > 0) {
     const innerColumns = block.columns > 0 ? block.columns : spanned(block.children);
     const innerGrid = layoutGrid(block.children, innerColumns);
-    const childSizes: Sized = new Map();
-    computeAllSizes(block.children, childSizes, paddingX, colGap);
-    const [colWidths, rowHeights] = gridDimensions(innerGrid, innerColumns, childSizes, colGap);
+    const [colWidths, rowHeights] = gridDimensions(innerGrid, innerColumns, sizes, colGap);
 
     const innerW = colWidths.reduce((a, b) => a + b, 0) + colGap * Math.max(0, innerColumns - 1);
     const innerH = rowHeights.reduce((a, b) => a + b, 0) + ROW_GAP * Math.max(0, innerGrid.length - 1);
@@ -121,8 +129,8 @@ function blockSize(block: Block, paddingX: number, colGap: number): [number, num
 
 function computeAllSizes(blocks: Block[], sizes: Sized, paddingX: number, colGap: number): void {
   for (const block of blocks) {
-    sizes.set(block.id, blockSize(block, paddingX, colGap));
     if (block.children.length > 0) computeAllSizes(block.children, sizes, paddingX, colGap);
+    sizes.set(block.id, blockSize(block, sizes, paddingX, colGap));
   }
 }
 
