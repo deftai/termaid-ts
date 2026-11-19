@@ -1,12 +1,8 @@
 // Ported from src/termaid/routing/pathfinder.py.
 //
-// A* over the grid: four directions, Manhattan distance with a corner penalty, and an already-routed edge as a SOFT
-// obstacle rather than a wall.
-//
-// The heap below is CPython's `heapq`, sift for sift. Two nodes of equal cost are separated by nothing but the heap's
-// own shape, so any other heap would pick another path of the same length and draw another picture.
+// A* over the grid: four directions, Manhattan distance with a corner penalty, soft obstacles, custom cell penalties,
+// and perpendicular-only crossing cells. Uses CPython's exact `heapq` sift order.
 
-/** Up, down, left, right. */
 const DIRS: ReadonlyArray<readonly [number, number]> = [
   [0, -1],
   [0, 1],
@@ -14,28 +10,29 @@ const DIRS: ReadonlyArray<readonly [number, number]> = [
   [1, 0],
 ];
 
-/** What a step costs, what crossing another edge adds, and what turning adds. */
 const STEP_COST = 1;
 const SOFT_PENALTY = 2;
 const CORNER_PENALTY = 0.5;
-/** The corner penalty the heuristic adds where start and end are not on one axis. */
 const HEURISTIC_CORNER = 1;
 const MAX_ITERATIONS = 5000;
 
 export type Cell = readonly [number, number];
 export const cellId = (col: number, row: number): string => `${col},${row}`;
+export function parseCellId(key: string): Cell {
+  const comma = key.indexOf(",");
+  return [Number.parseInt(key.slice(0, comma), 10), Number.parseInt(key.slice(comma + 1), 10)];
+}
 
 interface AStarNode {
   fCost: number;
   gCost: number;
-  col: number;
-  row: number;
+  cell: Cell;
   parent: AStarNode | null;
+  heading: Cell | null;
 }
 
 const less = (a: AStarNode, b: AStarNode): boolean => a.fCost < b.fCost;
 
-/** CPython's `heapq._siftdown`. */
 function siftDown(heap: AStarNode[], startPos: number, pos: number): void {
   const newItem = heap[pos] as AStarNode;
   while (pos > startPos) {
@@ -48,7 +45,6 @@ function siftDown(heap: AStarNode[], startPos: number, pos: number): void {
   heap[pos] = newItem;
 }
 
-/** CPython's `heapq._siftup`: the smaller child rises all the way, then the item sinks back down. */
 function siftUp(heap: AStarNode[], pos: number): void {
   const endPos = heap.length;
   const startPos = pos;
@@ -79,7 +75,6 @@ function heapPop(heap: AStarNode[]): AStarNode {
   return top;
 }
 
-/** Manhattan distance, plus one where the two points do not share an axis. */
 export function heuristic(c1: number, r1: number, c2: number, r2: number): number {
   const dx = Math.abs(c1 - c2);
   const dy = Math.abs(r1 - r2);
@@ -90,14 +85,18 @@ function reconstruct(node: AStarNode): Cell[] {
   const path: Cell[] = [];
   let current: AStarNode | null = node;
   while (current !== null) {
-    path.push([current.col, current.row]);
+    path.push(current.cell);
     current = current.parent;
   }
   path.reverse();
   return path;
 }
 
-/** Every cell from start to end, or null where nothing gets through. The two endpoints are walkable whatever holds them. */
+export interface FindPathOptions {
+  penalty?: ((col: number, row: number) => number) | null;
+  crossings?: ReadonlyMap<string, boolean> | null;
+}
+
 export function findPath(
   startCol: number,
   startRow: number,
@@ -105,60 +104,84 @@ export function findPath(
   endRow: number,
   isFree: (col: number, row: number) => boolean,
   softObstacles: ReadonlySet<string> = new Set(),
-  maxIterations: number = MAX_ITERATIONS
+  maxIterations: number = MAX_ITERATIONS,
+  options: FindPathOptions = {}
 ): Cell[] | null {
   if (startCol === endCol && startRow === endRow) return [[startCol, startRow]];
 
-  const start: AStarNode = {
+  const penalty = options.penalty ?? null;
+  const cross = options.crossings ?? null;
+
+  const startKey = cellId(startCol, startRow);
+  const startNode: AStarNode = {
     fCost: heuristic(startCol, startRow, endCol, endRow),
     gCost: 0,
-    col: startCol,
-    row: startRow,
+    cell: [startCol, startRow],
     parent: null,
+    heading: null,
   };
 
-  const open: AStarNode[] = [start];
+  const open: AStarNode[] = [startNode];
   const closed = new Set<string>();
-  const bestG = new Map<string, number>([[cellId(startCol, startRow), 0]]);
+  const bestG = new Map<string, number>([[startKey, 0]]);
 
   for (let iterations = 0; open.length > 0 && iterations < maxIterations; iterations++) {
     const current = heapPop(open);
-    if (current.col === endCol && current.row === endRow) return reconstruct(current);
+    const [col, row] = current.cell;
 
-    const key = cellId(current.col, current.row);
+    if (col === endCol && row === endRow) return reconstruct(current);
+
+    const heading = current.heading;
+    const baseKey = cellId(col, row);
+    const inCrossing = cross !== null && cross.has(baseKey);
+    const key = inCrossing && heading !== null ? `${baseKey}:${heading[0]},${heading[1]}` : baseKey;
     if (closed.has(key)) continue;
     closed.add(key);
+    const currentG = current.gCost;
 
-    for (const [dc, dr] of DIRS) {
-      const col = current.col + dc;
-      const row = current.row + dr;
-      const next = cellId(col, row);
-      if (closed.has(next)) continue;
-
-      const isEndpoint = col === endCol && row === endRow;
-      if (!isEndpoint && !isFree(col, row)) continue;
-
-      let stepCost = STEP_COST;
-      if (softObstacles.has(next)) stepCost += SOFT_PENALTY;
-      if (current.parent !== null) {
-        const prevDc = current.col - current.parent.col;
-        const prevDr = current.row - current.parent.row;
-        if (dc !== prevDc || dr !== prevDr) stepCost += CORNER_PENALTY;
+    const directions: ReadonlyArray<Cell> = inCrossing && heading !== null ? [heading] : DIRS;
+    for (const direction of directions) {
+      const [dc, dr] = direction;
+      const nc = col + dc;
+      const nr = row + dr;
+      const nkey = cellId(nc, nr);
+      let state = nkey;
+      const crossHorizontal = cross?.get(nkey);
+      if (crossHorizontal !== undefined) {
+        if ((dc === 0) !== crossHorizontal) continue;
+        state = `${nkey}:${dc},${dr}`;
       }
 
-      const g = current.gCost + stepCost;
-      const known = bestG.get(next);
-      if (known !== undefined && known <= g) continue;
-      bestG.set(next, g);
+      if (closed.has(state)) continue;
 
-      heapPush(open, { fCost: g + heuristic(col, row, endCol, endRow), gCost: g, col, row, parent: current });
+      const isEndpoint = nc === endCol && nr === endRow;
+      if (!isEndpoint && !isFree(nc, nr)) continue;
+
+      let stepCost = STEP_COST;
+      if (softObstacles.has(nkey)) stepCost += SOFT_PENALTY;
+      if (penalty !== null) stepCost += penalty(nc, nr);
+      if (heading !== null && (dc !== heading[0] || dr !== heading[1])) {
+        stepCost += CORNER_PENALTY;
+      }
+
+      const newG = currentG + stepCost;
+      const prevG = bestG.get(state);
+      if (prevG !== undefined && prevG <= newG) continue;
+      bestG.set(state, newG);
+
+      heapPush(open, {
+        fCost: newG + heuristic(nc, nr, endCol, endRow),
+        gCost: newG,
+        cell: [nc, nr],
+        parent: current,
+        heading: direction,
+      });
     }
   }
 
   return null;
 }
 
-/** The same path with its straight runs collapsed: only the corners are kept. */
 export function simplifyPath(path: Cell[]): Cell[] {
   if (path.length <= 2) return path;
   const result: Cell[] = [path[0] as Cell];
