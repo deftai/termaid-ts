@@ -1,21 +1,33 @@
 // Ported from src/termaid/parser/gantt.py.
 
 import {
+  Duration,
   makeGantt,
   makeGanttSection,
   makeGanttTask,
+  startTaskAt,
   type Gantt,
   type GanttSection,
   type GanttTask,
 } from "../model/gantt.ts";
-import { PY_WORD, pyInt, pyStrip, splitLines } from "../pycompat.ts";
-import { fromYMD, strptime, type CivilDate } from "../pydate.ts";
+import { PY_WORD, pyFloat, pySplit, pyStrip, splitLines } from "../pycompat.ts";
+import {
+  EPOCH_INSTANT,
+  US_PER_MS,
+  US_PER_SECOND,
+  addTimedeltaFloat,
+  fromDateTime,
+  strptime,
+  type Instant,
+} from "../pydate.ts";
 
 const COMMENT = "%%";
 const TITLE = "title ";
 const DATE_FORMAT = "dateformat ";
-/** Directives that say how to PRINT the chart, which this renderer does not read. */
-const IGNORED = ["axisformat ", "excludes ", "tickinterval ", "weekend "];
+const AXIS_FORMAT = "axisformat ";
+const TICK_INTERVAL = "tickinterval ";
+const EXCLUDES = "excludes ";
+const WEEKEND = "weekend ";
 const TODAY_MARKER = "todaymarker ";
 const OFF = "off";
 const VERTICAL = "vert ";
@@ -24,51 +36,70 @@ const AFTER = "after ";
 const FIELD = ":";
 const SEPARATOR = ",";
 
-/** The tags a task may carry before its fields. */
 const DONE = "done";
 const ACTIVE = "active";
 const CRIT = "crit";
 const MILESTONE = "milestone";
 
-/** dayjs tokens as the strptime directives they mean, longest first so `YYYY` is never read as two `YY`. */
-const FORMAT_TOKENS: ReadonlyArray<readonly [string, string]> = [
-  ["YYYY", "%Y"],
-  ["YY", "%y"],
-  ["MM", "%m"],
-  ["DD", "%d"],
-  ["HH", "%H"],
-  ["mm", "%M"],
-  ["ss", "%S"],
-  ["M", "%m"],
-  ["D", "%d"],
-  ["H", "%H"],
-];
-const FORMAT_TOKEN_RE = /YYYY|YY|MM|DD|HH|mm|ss|M|D|H/g;
+/** Mermaid (dayjs) date format tokens -> strptime directives, longest first. */
+const FORMAT_TOKENS: Readonly<Record<string, string>> = {
+  YYYY: "%Y",
+  YY: "%y",
+  MM: "%m",
+  M: "%m",
+  DD: "%d",
+  D: "%d",
+  HH: "%H",
+  H: "%H",
+  hh: "%I",
+  h: "%I",
+  mm: "%M",
+  m: "%M",
+  ss: "%S",
+  s: "%S",
+  SSS: "%f",
+  A: "%p",
+  a: "%p",
+};
+const FORMAT_TOKEN_RE = /YYYY|SSS|YY|MM|DD|HH|hh|mm|ss|M|D|H|h|m|s|A|a/g;
+
+const DURATION_RE = /^(\d+(?:\.\d+)?)\s*(ms|[Mdhmswy]|days?|weeks?|months?)$/;
+const DURATION_UNITS: Readonly<Record<string, string>> = {
+  ms: "millisecond",
+  s: "second",
+  m: "minute",
+  h: "hour",
+  d: "day",
+  w: "week",
+  M: "month",
+  y: "year",
+  day: "day",
+  days: "day",
+  week: "week",
+  weeks: "week",
+  month: "month",
+  months: "month",
+};
+const TICK_INTERVAL_RE = /^([1-9][0-9]*)(millisecond|second|minute|hour|day|week|month)$/;
 
 const ISO_RE = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
 const US_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
-const DURATION_RE = /^(\d+)\s*(d|day|days|w|week|weeks|m|month|months)$/;
 const ID_RE = new RegExp(String.raw`^[a-zA-Z_]${PY_WORD}*$`, "u");
 const NOT_ID_CHAR_RE = /[^a-zA-Z0-9]/g;
-/** How long an id made up from the title may be. */
 const GENERATED_ID_LENGTH = 20;
 
-const DAYS_PER_WEEK = 7;
-/** What a month is worth here, which is a flat count and never a calendar month. */
-const DAYS_PER_MONTH = 30;
-
-/** A mermaid gantt definition. */
+/** Parse a mermaid gantt diagram definition. */
 export function parseGantt(text: string): Gantt {
   const lines = splitLines(pyStrip(text));
   const gantt = makeGantt();
   if (lines.length === 0) return gantt;
 
-  let section: GanttSection | null = null;
-  const byId = new Map<string, GanttTask>();
+  let currentSection: GanttSection | null = null;
+  const tasksById = new Map<string, GanttTask>();
 
   for (let line of lines.slice(1)) {
-    const comment = line.indexOf(COMMENT);
-    if (comment >= 0) line = line.slice(0, comment);
+    const commentIdx = line.indexOf(COMMENT);
+    if (commentIdx >= 0) line = line.slice(0, commentIdx);
 
     const stripped = pyStrip(line);
     if (stripped === "") continue;
@@ -84,7 +115,25 @@ export function parseGantt(text: string): Gantt {
       continue;
     }
 
-    if (IGNORED.some((directive) => lower.startsWith(directive))) continue;
+    if (lower.startsWith(AXIS_FORMAT)) {
+      gantt.axisFormat = pyStrip(stripped.slice(AXIS_FORMAT.length));
+      continue;
+    }
+
+    if (lower.startsWith(TICK_INTERVAL)) {
+      const m = TICK_INTERVAL_RE.exec(pyStrip(stripped.slice(TICK_INTERVAL.length)));
+      if (m !== null) {
+        gantt.tickInterval = {
+          count: Number.parseInt(m[1] as string, 10),
+          unit: m[2] as string,
+        };
+      }
+      continue;
+    }
+
+    if (lower.startsWith(EXCLUDES) || lower.startsWith(WEEKEND)) {
+      continue;
+    }
 
     if (lower.startsWith(TODAY_MARKER)) {
       if (lower.includes(OFF)) gantt.todayMarker = false;
@@ -92,56 +141,51 @@ export function parseGantt(text: string): Gantt {
     }
 
     if (lower.startsWith(VERTICAL)) {
-      const marker = parseDate(pyStrip(stripped.slice(VERTICAL.length)), gantt.dateFormat);
-      if (marker !== null) gantt.verticalMarkers.push(marker);
+      const d = parseDate(pyStrip(stripped.slice(VERTICAL.length)), gantt.dateFormat);
+      if (d !== null) gantt.verticalMarkers.push(d);
       continue;
     }
 
     if (lower.startsWith(SECTION)) {
-      section = makeGanttSection(pyStrip(stripped.slice(SECTION.length)));
-      gantt.sections.push(section);
+      currentSection = makeGanttSection(pyStrip(stripped.slice(SECTION.length)));
+      gantt.sections.push(currentSection);
       continue;
     }
 
-    if (!stripped.includes(FIELD)) continue;
-    const task = parseTask(stripped, gantt.dateFormat);
-    if (task === null) continue;
+    if (stripped.includes(FIELD)) {
+      const task = parseTask(stripped, gantt.dateFormat);
+      if (task !== null) {
+        if (currentSection === null) {
+          currentSection = makeGanttSection("");
+          gantt.sections.push(currentSection);
+        }
 
-    if (section === null) {
-      section = makeGanttSection("");
-      gantt.sections.push(section);
+        const prev = currentSection.tasks[currentSection.tasks.length - 1];
+        if (task.start === null && task.after === "" && prev !== undefined && prev.end !== null) {
+          startTaskAt(task, prev.end);
+        }
+
+        currentSection.tasks.push(task);
+        if (task.id !== "") tasksById.set(task.id, task);
+      }
     }
-
-    // A task saying nothing about when it starts follows the one written before it.
-    const previous = section.tasks[section.tasks.length - 1];
-    if (task.start === null && task.after === "" && previous !== undefined && previous.end !== null) {
-      task.start = previous.end;
-      if (task.end === null && task.durationDays !== undefined) task.end = task.start + task.durationDays;
-    }
-
-    section.tasks.push(task);
-    if (task.id !== "") byId.set(task.id, task);
   }
 
-  // A chain of `after` resolves one link per pass, so the whole chain needs as many passes as there are tasks.
-  for (let pass = 0; pass < byId.size + 1; pass++) {
+  for (let pass = 0; pass < tasksById.size + 1; pass++) {
     let changed = false;
-    for (const sec of gantt.sections) {
-      for (const task of sec.tasks) {
+    for (const section of gantt.sections) {
+      for (const task of section.tasks) {
         if (task.after === "" || task.start !== null) continue;
-        let latest: CivilDate | null = null;
-        let resolved = true;
-        for (const id of task.after.split(/\s+/).filter((part) => part !== "")) {
-          const dependency = byId.get(id);
-          if (dependency !== undefined && dependency.end !== null) {
-            if (latest === null || dependency.end > latest) latest = dependency.end;
-          } else {
-            resolved = false;
-          }
+        const ids = pySplit(task.after);
+        const ends: Instant[] = [];
+        for (const aid of ids) {
+          const dep = tasksById.get(aid);
+          if (dep !== undefined && dep.end !== null) ends.push(dep.end);
         }
-        if (resolved && latest !== null) {
-          task.start = latest;
-          if (task.end === null && task.durationDays !== undefined) task.end = task.start + task.durationDays;
+        if (ends.length > 0 && ends.length === ids.length) {
+          let latest = ends[0] as Instant;
+          for (const e of ends.slice(1)) if (e > latest) latest = e;
+          startTaskAt(task, latest);
           changed = true;
         }
       }
@@ -152,17 +196,14 @@ export function parseGantt(text: string): Gantt {
   return gantt;
 }
 
-/** One task line: `Title :done, id, 2024-01-01, 2024-01-14`. */
 function parseTask(line: string, dateFormat: string): GanttTask | null {
-  const at = line.indexOf(FIELD);
-  if (at < 0) return null;
+  const colonIdx = line.indexOf(FIELD);
+  if (colonIdx < 0) return null;
 
-  const task = makeGanttTask(pyStrip(line.slice(0, at)));
-  const parts = pyStrip(line
-    .slice(at + 1)
-    )
-    .split(SEPARATOR)
-    .map((part) => pyStrip(part));
+  const title = pyStrip(line.slice(0, colonIdx));
+  const rest = pyStrip(line.slice(colonIdx + 1));
+  const task = makeGanttTask(title);
+  const parts = rest.split(SEPARATOR).map((p) => pyStrip(p));
 
   const remaining: string[] = [];
   for (const part of parts) {
@@ -180,46 +221,55 @@ function parseTask(line: string, dateFormat: string): GanttTask | null {
       continue;
     }
 
-    const duration = parseDuration(part);
-    if (duration !== null) {
-      task.durationDays = duration;
-      if (task.start !== null) task.end = task.start + duration;
+    const d = parseDate(part, dateFormat);
+    if (d !== null) {
+      if (task.start === null && task.after === "") {
+        task.start = d;
+      } else {
+        task.end = d;
+      }
       continue;
     }
 
-    const when = parseDate(part, dateFormat);
-    if (when !== null) {
-      if (task.start === null) task.start = when;
-      else task.end = when;
+    const dur = parseDuration(part);
+    if (dur !== null) {
+      task.duration = dur;
+      if (task.start !== null) {
+        task.end = dur.endFrom(task.start);
+      }
       continue;
     }
 
-    if (task.id === "" && ID_RE.test(part)) task.id = part;
+    if (task.id === "" && ID_RE.test(part)) {
+      task.id = part;
+    }
   }
 
   if (task.id === "") {
-    task.id = [...task.title.toLowerCase().replace(NOT_ID_CHAR_RE, "_")].slice(0, GENERATED_ID_LENGTH).join("");
+    task.id = [...title.toLowerCase().replace(NOT_ID_CHAR_RE, "_")].slice(0, GENERATED_ID_LENGTH).join("");
   }
 
   return task;
 }
 
-/** A date, read first the way the diagram said to read it, then as ISO, then as the American order. */
-function parseDate(text: string, dateFormat: string): CivilDate | null {
+function parseDate(text: string, dateFormat: string): Instant | null {
   const stripped = pyStrip(text);
+  const fmt = pyStrip(dateFormat);
+  if (fmt === "x" || fmt === "X") {
+    const value = pyFloat(stripped);
+    if (value === null || !Number.isFinite(value)) return null;
+    return addTimedeltaFloat(EPOCH_INSTANT, fmt === "x" ? US_PER_MS : US_PER_SECOND, value);
+  }
 
-  if (dateFormat !== "") {
-    const format = dateFormat.replace(FORMAT_TOKEN_RE, (token) => {
-      const known = FORMAT_TOKENS.find(([name]) => name === token);
-      return known === undefined ? token : known[1];
-    });
-    const declared = strptime(stripped, format);
+  if (fmt !== "") {
+    const strptimeFmt = fmt.replace(FORMAT_TOKEN_RE, (m) => FORMAT_TOKENS[m] ?? m);
+    const declared = strptime(stripped, strptimeFmt);
     if (declared !== null) return declared;
   }
 
   const iso = ISO_RE.exec(stripped);
   if (iso !== null) {
-    return fromYMD(
+    return fromDateTime(
       Number.parseInt(iso[1] as string, 10),
       Number.parseInt(iso[2] as string, 10),
       Number.parseInt(iso[3] as string, 10)
@@ -228,7 +278,7 @@ function parseDate(text: string, dateFormat: string): CivilDate | null {
 
   const american = US_RE.exec(stripped);
   if (american !== null) {
-    return fromYMD(
+    return fromDateTime(
       Number.parseInt(american[3] as string, 10),
       Number.parseInt(american[1] as string, 10),
       Number.parseInt(american[2] as string, 10)
@@ -238,15 +288,11 @@ function parseDate(text: string, dateFormat: string): CivilDate | null {
   return null;
 }
 
-/** A duration such as `30d`, `2w` or `3m`, always in days. */
-function parseDuration(text: string): number | null {
-  const duration = DURATION_RE.exec(pyStrip(text).toLowerCase());
-  if (duration === null) return null;
-  const value = pyInt(duration[1] as string);
-  if (value === null) return null;
-  const unit = (duration[2] as string)[0];
-  if (unit === "d") return value;
-  if (unit === "w") return value * DAYS_PER_WEEK;
-  if (unit === "m") return value * DAYS_PER_MONTH;
-  return null;
+function parseDuration(text: string): Duration | null {
+  const m = DURATION_RE.exec(pyStrip(text));
+  if (m === null) return null;
+  const amount = Number.parseFloat(m[1] as string);
+  const unit = DURATION_UNITS[m[2] as string];
+  if (unit === undefined || !Number.isFinite(amount)) return null;
+  return new Duration(amount, unit);
 }
