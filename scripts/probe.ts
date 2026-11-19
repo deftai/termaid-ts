@@ -234,12 +234,7 @@ const handwritten = (family: string, cases: ReadonlyArray<readonly [string, stri
 // ------------------------------------------------------------------ le rapport
 
 /** Là où le port diverge EXPRÈS. Le cas est toujours rendu et comparé : seul le verdict change. */
-const ASSUMED: ReadonlyArray<readonly [string, string]> = [
-  ["bom-leading", "un BOM en tête est retiré avant la lecture de l'entête, quand la référence le garde et perd le diagramme (◉ 0.8.0)"],
-  ["pie-title-inline", "un titre `pie` écrit sur la ligne d'entête est lu, quand la référence le laisse tomber (◉ 0.8.3)"],
-  ["pie-showdata-title-inline", "le même titre d'entête, derrière `showData` (◉ 0.8.3)"],
-  ["mindmap-root-", "un id devant une forme est un pointeur et non un mot, quand la référence dessine les deux (◉ 0.8.3)"],
-];
+const ASSUMED: ReadonlyArray<readonly [string, string]> = [];
 
 const assumedFor = (label: string): string | undefined => ASSUMED.find(([at]) => label.startsWith(at))?.[1];
 

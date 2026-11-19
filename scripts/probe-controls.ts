@@ -98,9 +98,7 @@ await Promise.all(
 );
 
 // Là où le port diverge EXPRÈS. Chaque harnais nomme SES cas, sinon une allowance périmée ne se voit nulle part.
-const ASSUMED: ReadonlyArray<readonly [string, string]> = [
-  ["bom-leading", "un BOM en tête est retiré avant la lecture de l'entête, quand la référence le garde et perd le diagramme (◉ 0.8.0)"],
-];
+const ASSUMED: ReadonlyArray<readonly [string, string]> = [];
 const assumedFor = (label: string): string | undefined => ASSUMED.find(([at]) => label.startsWith(at))?.[1];
 
 const assumed = divergences.filter((d) => assumedFor(d.label) !== undefined);

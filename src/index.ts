@@ -107,6 +107,11 @@ export interface Options extends Partial<RenderOptions> {
    * Layout is untouched either way: the same drawing, painted for the other side.
    */
   background?: Background;
+  /**
+   * ◉ Enable this port's deliberate layout/parsing divergences from Python termaid (default: `false`).
+   * With `false`, the port reproduces the Python reference byte for byte.
+   */
+  divergences?: boolean;
 }
 
 /** The FLOWCHART's own defaults. A renderer of its own keeps its own, unless the caller has moved off these. */
@@ -232,6 +237,7 @@ const SPECIALISED: ReadonlyArray<{ prefix: string; draw: Draw; paint: Paint }> =
           paddingX: o.paddingX ?? DEFAULT_RENDER.paddingX,
           paddingY: o.paddingY ?? DEFAULT_RENDER.paddingY,
           roundedEdges: o.roundedEdges ?? DEFAULT_RENDER.roundedEdges,
+          divergences: o.divergences ?? DEFAULT_RENDER.divergences,
         },
         theme
       ),
@@ -248,8 +254,13 @@ const SPECIALISED: ReadonlyArray<{ prefix: string; draw: Draw; paint: Paint }> =
   },
   {
     prefix: "mindmap",
-    draw: (source, o) => renderMindmap(parseMindmap(source), o.useAscii ?? false, o.roundedEdges ?? true).toString(),
-    paint: (source, o, theme) => renderSequenceRich(renderMindmap(parseMindmap(source), o.useAscii ?? false), theme),
+    draw: (source, o) =>
+      renderMindmap(parseMindmap(source, o.divergences ?? false), o.useAscii ?? false, o.roundedEdges ?? true).toString(),
+    paint: (source, o, theme) =>
+      renderSequenceRich(
+        renderMindmap(parseMindmap(source, o.divergences ?? false), o.useAscii ?? false, o.roundedEdges ?? true),
+        theme
+      ),
   },
   {
     prefix: "packet",
@@ -265,7 +276,8 @@ const SPECIALISED: ReadonlyArray<{ prefix: string; draw: Draw; paint: Paint }> =
   {
     prefix: "xychart",
     draw: (source, o) => renderXYChart(parseXYChart(source), o.useAscii ?? false, o.roundedEdges ?? true).toString(),
-    paint: (source, o, theme) => renderSequenceRich(renderXYChart(parseXYChart(source), o.useAscii ?? false), theme),
+    paint: (source, o, theme) =>
+      renderSequenceRich(renderXYChart(parseXYChart(source), o.useAscii ?? false, o.roundedEdges ?? true), theme),
   },
   {
     prefix: "journey",
@@ -306,8 +318,9 @@ const SPECIALISED: ReadonlyArray<{ prefix: string; draw: Draw; paint: Paint }> =
   },
   {
     prefix: "quadrantChart",
-    draw: (source, o) => renderQuadrant(parseQuadrant(source), o.useAscii ?? false).toString(),
-    paint: (source, o, theme) => renderSequenceRich(renderQuadrant(parseQuadrant(source), o.useAscii ?? false), theme),
+    draw: (source, o) => renderQuadrant(parseQuadrant(source), o.useAscii ?? false, o.divergences ?? false).toString(),
+    paint: (source, o, theme) =>
+      renderSequenceRich(renderQuadrant(parseQuadrant(source), o.useAscii ?? false, o.divergences ?? false), theme),
   },
 ];
 
@@ -325,20 +338,8 @@ const declared = (text: string): (typeof SPECIALISED)[number] | undefined =>
 /** What `declaredType` answers for the family the fallback parser draws, whichever of its header words was used. */
 const FLOWCHART = "flowchart";
 
-/**
- * ◉ The byte order mark an editor writes in front of a UTF-8 file, taken off before anything reads the header. The
- * reference does not: `strip()` leaves it, so the first word becomes `﻿pie` and the source falls to the flowchart
- * parser, which draws the pie's own syntax as boxes. `pie`, `sequenceDiagram`, `gantt`, `mindmap` and `classDiagram`
- * all lose their diagram there, and a flowchart keeps only its default direction (measured 2026-08-17).
- *
- * What widens is the input ACCEPTED, never the drawing: a source the reference accepts renders its own bytes, since a
- * BOM is by definition the first character of a file and nowhere else.
- */
-const BOM = "﻿";
-const withoutBom = (source: string): string => (source.startsWith(BOM) ? source.slice(BOM.length) : source);
-
-/** What every entry point reads instead of the source it was handed: `str.strip()` and no frontmatter. */
-const headed = (source: string): string => pyStrip(withoutBom(source)).replace(FRONTMATTER_RE, "");
+/** What every entry point reads instead of the source it was handed: leading BOM stripped, `str.strip()` and no frontmatter. */
+const headed = (source: string): string => pyStrip(source.replace(/^\ufeff+/u, "")).replace(FRONTMATTER_RE, "");
 
 /**
  * The type a source DECLARES, read exactly the way the dispatch reads it, or null where it declares none this renderer

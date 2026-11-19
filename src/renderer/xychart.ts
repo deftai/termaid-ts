@@ -1,7 +1,6 @@
 // Ported from src/termaid/renderer/xychart.py.
 //
-// Bars and lines on labelled axes. A chart declared horizontal is only drawn that way where it holds bars alone: a
-// line needs a continuous axis to say anything.
+// Bars and lines on labelled axes, supporting vertical (default) and horizontal orientations.
 
 import type { XYChart } from "../model/xychart.ts";
 import { formatFixed } from "../pycompat.ts";
@@ -15,12 +14,6 @@ const BAR_WIDTH = 4;
 const BAR_GAP = 2;
 /** Columns left of the axis for the values written down it. */
 const MARGIN_L = 8;
-/** What tells the label apart from a subtitle: it names the axis running UP the chart. */
-const Y_MARK = "↑";
-const Y_MARK_ASCII = "^";
-/** Turned sideways, the value axis runs across, so its mark points along it. */
-const Y_MARK_H = "→";
-const Y_MARK_ASCII_H = ">";
 const EMPTY_SIZE = 1;
 /** How many values are written along an axis, plus the one at the origin. */
 const TICKS = 5;
@@ -38,9 +31,20 @@ const sectionStyle = (index: number): string => `section:${index % SECTION_COLOU
 
 export function renderXYChart(diagram: XYChart, useAscii = false, rounded = true): Canvas {
   if (diagram.datasets.length === 0) return new Canvas(EMPTY_SIZE, EMPTY_SIZE);
-  const hasLine = diagram.datasets.some((ds) => ds.chartType === "line");
-  if (diagram.horizontal && !hasLine) return renderHorizontal(diagram, useAscii);
+  if (diagram.horizontal) return renderHorizontal(diagram, useAscii);
   return renderVertical(diagram, useAscii, rounded);
+}
+
+/** Rows above the chart area: title, the label of the vertical axis, spacer. */
+function headerRows(title: string, axisLabel: string): number {
+  if (title !== "") return 2;
+  return axisLabel !== "" ? 1 : 0;
+}
+
+/** Draw the vertical axis' label just above its tick labels. */
+function drawAxisHeader(canvas: Canvas, row: number, marginL: number, label: string): void {
+  const col = Math.max(1, marginL - displayWidth(label));
+  canvas.putText(row, col, label, STYLE_AXIS_LABEL);
 }
 
 /** The value range the chart is drawn against, and how many points sit along it. */
@@ -86,31 +90,28 @@ function renderVertical(diagram: XYChart, useAscii: boolean, rounded: boolean): 
   const columnWidth = Math.max(BAR_WIDTH, categoryWidth + 1);
 
   const chartWidth = points * (columnWidth + BAR_GAP) - BAR_GAP;
-  const titleRows = diagram.title !== "" ? 2 : 0;
-  // ◉ The y-axis label, parsed into the model by both sides and read by neither renderer: `renderer/xychart.py` names
-  // `x_label` six times and `y_label` not once. Given a line of its own under the title, marked with the axis it
-  // names, and costing a row only where a chart declares one.
-  const yLabelLine = diagram.yLabel === "" ? "" : `${useAscii ? Y_MARK_ASCII : Y_MARK} ${diagram.yLabel}`;
-  const headRows = titleRows + (yLabelLine === "" ? 0 : 1);
-  const canvas = new Canvas(MARGIN_L + 1 + chartWidth + 2 + 1, CHART_H + 4 + headRows + 1);
+  const titleLines = headerRows(diagram.title, diagram.yLabel);
+  const rowOffset = titleLines;
+  const canvas = new Canvas(MARGIN_L + 1 + chartWidth + 2 + 1, CHART_H + 4 + titleLines + 1);
 
   if (diagram.title !== "") {
     const at = MARGIN_L + Math.floor((chartWidth - displayWidth(diagram.title)) / 2);
     canvas.putText(0, Math.max(0, at), diagram.title, STYLE_LABEL);
   }
-
-  if (yLabelLine !== "") canvas.putText(titleRows, 0, yLabelLine, STYLE_AXIS_LABEL);
+  if (diagram.yLabel !== "") {
+    drawAxisHeader(canvas, rowOffset - 1, MARGIN_L, diagram.yLabel);
+  }
 
   for (let i = 0; i <= TICKS; i++) {
     const label = formatValue(low + (span * (TICKS - i)) / TICKS);
-    const row = headRows + Math.floor((i * CHART_H) / TICKS);
+    const row = rowOffset + Math.floor((i * CHART_H) / TICKS);
     canvas.putText(row, Math.max(0, MARGIN_L - displayWidth(label) - 1), label, STYLE_AXIS_LABEL);
     canvas.put(row, MARGIN_L, leftTick, false, STYLE_EDGE);
   }
 
-  for (let r = headRows; r <= headRows + CHART_H; r++) canvas.put(r, MARGIN_L, vertical, false, STYLE_EDGE);
+  for (let r = rowOffset; r <= rowOffset + CHART_H; r++) canvas.put(r, MARGIN_L, vertical, false, STYLE_EDGE);
 
-  const axisRow = headRows + CHART_H;
+  const axisRow = rowOffset + CHART_H;
   canvas.put(axisRow, MARGIN_L, corner, false, STYLE_EDGE);
   for (let c = MARGIN_L + 1; c < MARGIN_L + 1 + chartWidth; c++) canvas.put(axisRow, c, horizontal, false, STYLE_EDGE);
 
@@ -126,27 +127,27 @@ function renderVertical(diagram: XYChart, useAscii: boolean, rounded: boolean): 
       if (ds.chartType === "bar") {
         for (let r = 0; r < bars; r++) {
           for (let c = 0; c < columnWidth; c++) {
-            canvas.put(headRows + CHART_H - 1 - r, left + c, barChar, false, sectionStyle(i));
+            canvas.put(rowOffset + CHART_H - 1 - r, left + c, barChar, false, sectionStyle(i));
           }
         }
         const leftover = ((value - low) / span) * CHART_H - bars;
         if (leftover > HALF_BLOCK_SHARE && bars < CHART_H) {
           for (let c = 0; c < columnWidth; c++) {
-            canvas.put(headRows + CHART_H - 1 - bars, left + c, barHalf, false, sectionStyle(i));
+            canvas.put(rowOffset + CHART_H - 1 - bars, left + c, barHalf, false, sectionStyle(i));
           }
         }
         return;
       }
 
-      const row = headRows + CHART_H - 1 - Math.max(0, bars - 1);
+      const row = rowOffset + CHART_H - 1 - Math.max(0, bars - 1);
       const middle = left + Math.floor(columnWidth / 2);
       canvas.put(row, middle, horizontal, false, STYLE_EDGE);
 
       if (i > 0) {
         const previous = heightOf(ds.values[i - 1] as number);
-        const previousRow = headRows + CHART_H - 1 - Math.max(0, previous - 1);
+        const previousRow = rowOffset + CHART_H - 1 - Math.max(0, previous - 1);
         const previousMiddle = columnOf(i - 1) + Math.floor(columnWidth / 2);
-        connect(canvas, previousMiddle, previousRow, middle, row, useAscii, rounded);
+        drawLineV(canvas, previousMiddle, previousRow, middle, row, useAscii, rounded);
       }
     });
   }
@@ -182,22 +183,21 @@ function renderHorizontal(diagram: XYChart, useAscii: boolean): Canvas {
 
   // One row per bar, one blank row between them.
   const chartHeight = points * 2 - 1;
-  const titleRows = diagram.title !== "" ? 2 : 0;
-  // ◉ Same label, same silence on the reference's side, and the same line of its own here. Turned sideways the value
-  // axis is the one running ACROSS, so the mark points the way this chart actually reads.
-  const yLabelLine = diagram.yLabel === "" ? "" : `${useAscii ? Y_MARK_ASCII_H : Y_MARK_H} ${diagram.yLabel}`;
-  const headRows = titleRows + (yLabelLine === "" ? 0 : 1);
-  const canvas = new Canvas(marginLeft + 1 + CHART_W + 2 + 1, headRows + chartHeight + 3 + 1);
+  const titleLines = headerRows(diagram.title, diagram.xLabel);
+  const rowOffset = titleLines;
+  const canvas = new Canvas(marginLeft + 1 + CHART_W + 2 + 1, titleLines + chartHeight + 3 + 1);
 
   if (diagram.title !== "") {
     const at = marginLeft + Math.floor((CHART_W - displayWidth(diagram.title)) / 2);
     canvas.putText(0, Math.max(0, at), diagram.title, STYLE_LABEL);
   }
-  if (yLabelLine !== "") canvas.putText(titleRows, 0, yLabelLine, STYLE_AXIS_LABEL);
+  if (diagram.xLabel !== "") {
+    drawAxisHeader(canvas, rowOffset - 1, marginLeft, diagram.xLabel);
+  }
 
-  for (let r = headRows; r <= headRows + chartHeight; r++) canvas.put(r, marginLeft, vertical, false, STYLE_EDGE);
+  for (let r = rowOffset; r <= rowOffset + chartHeight; r++) canvas.put(r, marginLeft, vertical, false, STYLE_EDGE);
 
-  const axisRow = headRows + chartHeight;
+  const axisRow = rowOffset + chartHeight;
   canvas.put(axisRow, marginLeft, corner, false, STYLE_EDGE);
   for (let c = marginLeft + 1; c < marginLeft + 1 + CHART_W; c++) canvas.put(axisRow, c, horizontal, false, STYLE_EDGE);
 
@@ -208,28 +208,41 @@ function renderHorizontal(diagram: XYChart, useAscii: boolean): Canvas {
     canvas.putText(axisRow + 1, Math.max(0, col - Math.floor(displayWidth(label) / 2)), label, STYLE_AXIS_LABEL);
   }
 
-  if (diagram.xLabel !== "") {
-    const at = marginLeft + 1 + Math.floor((CHART_W - displayWidth(diagram.xLabel)) / 2);
-    canvas.putText(axisRow + 2, Math.max(0, at), diagram.xLabel, STYLE_AXIS_LABEL);
+  if (diagram.yLabel !== "") {
+    const at = marginLeft + 1 + Math.floor((CHART_W - displayWidth(diagram.yLabel)) / 2);
+    canvas.putText(axisRow + 2, Math.max(0, at), diagram.yLabel, STYLE_AXIS_LABEL);
   }
 
   for (const ds of diagram.datasets) {
     ds.values.forEach((value, i) => {
       if (i >= points) return;
-      const row = headRows + i * 2;
+      const row = rowOffset + i * 2;
       const bars = Math.trunc(((value - low) / span) * CHART_W);
 
       const category = categories[i] ?? "";
       canvas.putText(row, Math.max(0, marginLeft - displayWidth(category) - 1), category, STYLE_AXIS_LABEL);
-      for (let c = 0; c < bars; c++) canvas.put(row, marginLeft + 1 + c, barChar, false, sectionStyle(i));
+
+      if (ds.chartType === "bar") {
+        for (let c = 0; c < bars; c++) canvas.put(row, marginLeft + 1 + c, barChar, false, sectionStyle(i));
+        return;
+      }
+
+      const pointX = marginLeft + Math.trunc(((value - low) / span) * (CHART_W - 1));
+      canvas.put(row, pointX, vertical, false, STYLE_EDGE);
+      if (i > 0) {
+        const prevVal = ds.values[i - 1] as number;
+        const prevX = marginLeft + Math.trunc(((prevVal - low) / span) * (CHART_W - 1));
+        const prevRow = rowOffset + (i - 1) * 2;
+        drawLineH(canvas, prevX, prevRow, pointX, row, useAscii);
+      }
     });
   }
 
   return canvas;
 }
 
-/** The elbow between two points of a line, drawn halfway along and then down or up. */
-function connect(
+/** The elbow between two points of a line (vertical chart). */
+function drawLineV(
   canvas: Canvas,
   x1: number,
   y1: number,
@@ -259,6 +272,36 @@ function connect(
   for (let r = Math.min(y1, y2) + 1; r < Math.max(y1, y2); r++) canvas.put(r, middle, vertical, false, STYLE_EDGE);
   canvas.put(y2, middle, (up ? topLeft : bottomLeft) as string, false, STYLE_EDGE);
   for (let x = middle + 1; x < x2; x++) canvas.put(y2, x, horizontal, false, STYLE_EDGE);
+}
+
+/** The elbow between two points of a line (horizontal chart). */
+function drawLineH(
+  canvas: Canvas,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  useAscii: boolean
+): void {
+  const horizontal = useAscii ? "-" : "─";
+  const vertical = useAscii ? "|" : "│";
+  const [topLeft, topRight, bottomLeft, bottomRight] = useAscii
+    ? ["+", "+", "+", "+"]
+    : ["╭", "╮", "╰", "╯"];
+
+  if (x1 === x2) {
+    for (let r = y1 + 1; r < y2; r++) canvas.put(r, x1, vertical, false, STYLE_EDGE);
+    return;
+  }
+
+  const midY = Math.floor((y1 + y2) / 2);
+  const goingRight = x2 > x1;
+
+  for (let r = y1 + 1; r < midY; r++) canvas.put(r, x1, vertical, false, STYLE_EDGE);
+  canvas.put(midY, x1, (goingRight ? bottomLeft : bottomRight) as string, false, STYLE_EDGE);
+  for (let c = Math.min(x1, x2) + 1; c < Math.max(x1, x2); c++) canvas.put(midY, c, horizontal, false, STYLE_EDGE);
+  canvas.put(midY, x2, (goingRight ? topRight : topLeft) as string, false, STYLE_EDGE);
+  for (let r = midY + 1; r < y2; r++) canvas.put(r, x2, vertical, false, STYLE_EDGE);
 }
 
 /** A value as the axis writes it: whole numbers bare, everything else to one decimal. */

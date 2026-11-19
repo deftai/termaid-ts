@@ -40,10 +40,10 @@ export const sourcePath = (name: string): string => path.join(DIVERGENCES, `${na
 export const takePath = (name: string, width: number, theme: string | null): string =>
   path.join(DIVERGENCES, `${name}@${width}${theme === null ? "" : `.${theme}`}${DRAWN_EXT}`);
 
-/** What the port writes, by the same two chains `cli.ts` picks between. */
+/** What the port writes with `divergences: true`, by the same two chains `cli.ts` picks between. */
 export function drawn(source: string, width: number, theme: string | null): string {
-  if (theme === null) return `${render(source, { width })}\n`;
-  return printToConsole(renderThemedText(source, { width }, THEME));
+  if (theme === null) return `${render(source, { width, divergences: true })}\n`;
+  return printToConsole(renderThemedText(source, { width, divergences: true }, THEME));
 }
 
 const check = process.argv.includes(CHECK_FLAG);

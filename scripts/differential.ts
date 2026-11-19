@@ -403,21 +403,7 @@ async function checkCli(): Promise<void> {
  * Nothing in `fixtures/` belongs here: a divergence covered by a fixture would spread to every mutant derived from it,
  * so an assumed one is covered by a test of its own under `tests/` instead, and the corpus stays the parity corpus.
  */
-const ASSUMED: ReadonlyArray<readonly [string, string]> = [
-  [
-    "cli:demo-all",
-    "the demo's own pie writes `pie title Languages` on its header line, and the reference drops it (◉ 0.8.3)",
-  ],
-  // Matched on the PREFIX, so one reason covers a case at every profile it is run through rather than once per line.
-  [
-    "state-direction~",
-    "a back edge's label is written INSIDE a node box by the reference, and given a clear row here (◉ 0.8.3)",
-  ],
-  [
-    "state-endpoints~",
-    "a back edge's label is written INSIDE a node box by the reference, and given a clear row here (◉ 0.8.3)",
-  ],
-];
+const ASSUMED: ReadonlyArray<readonly [string, string]> = [];
 
 /** The reason this case is allowed to diverge, or nothing at all where it is not. */
 const assumedFor = (label: string): string | undefined => ASSUMED.find(([at]) => label.startsWith(at))?.[1];

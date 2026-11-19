@@ -42,6 +42,7 @@ export interface RenderOptions {
   paddingY: number;
   roundedEdges: boolean;
   gap: number;
+  divergences: boolean;
 }
 
 export const DEFAULT_RENDER: RenderOptions = {
@@ -50,6 +51,7 @@ export const DEFAULT_RENDER: RenderOptions = {
   paddingY: 2,
   roundedEdges: true,
   gap: 4,
+  divergences: false,
 };
 
 type Point = readonly [number, number];
@@ -66,7 +68,7 @@ export function renderGraph(graph: Graph, options: Partial<RenderOptions> = {}):
 
 /** The same drawing as a CANVAS, which is what a theme needs: every cell still carries its style key. */
 export function renderGraphCanvas(graph: Graph, options: Partial<RenderOptions> = {}): Canvas | null {
-  const { useAscii, paddingX, paddingY, roundedEdges, gap } = { ...DEFAULT_RENDER, ...options };
+  const { useAscii, paddingX, paddingY, roundedEdges, gap, divergences } = { ...DEFAULT_RENDER, ...options };
   if (graph.nodeOrder.length === 0) return null;
 
   const cs = useAscii ? ASCII : UNICODE;
@@ -93,7 +95,7 @@ export function renderGraphCanvas(graph: Graph, options: Partial<RenderOptions> 
 
   drawSubgraphBorders(canvas, layout, cs);
   drawNodes(canvas, graph, layout, cs);
-  drawEdges(canvas, graph, routed, cs, roundedEdges);
+  drawEdges(canvas, graph, routed, cs, roundedEdges, divergences);
   drawSubgraphLabels(canvas, layout);
   drawNotes(canvas, graph, layout, cs);
 
@@ -298,11 +300,18 @@ function fittedLabel(canvas: Canvas, row: number, col: number, label: string): s
   return truncateToWidth(label, free, ELLIPSIS);
 }
 
-function tryPlaceLabel(canvas: Canvas, row: number, col: number, label: string, placed: PlacedLabel[]): boolean {
+function tryPlaceLabel(
+  canvas: Canvas,
+  row: number,
+  col: number,
+  label: string,
+  placed: PlacedLabel[],
+  divergences: boolean
+): boolean {
   const colEnd = col + displayWidth(label);
   if (col < 0 || row < 0) return false;
   if (labelOverlaps(row, placed)) return false;
-  if (!labelFits(canvas, row, col, label)) return false;
+  if (divergences && !labelFits(canvas, row, col, label)) return false;
   const neededWidth = colEnd + 1;
   const neededHeight = row + 1;
   if (neededWidth > canvas.width || neededHeight > canvas.height) {
@@ -340,7 +349,8 @@ function tryPlaceOnSegment(
   placed: PlacedLabel[],
   prev: Point | null,
   preferLeft: boolean,
-  biasTarget: boolean
+  biasTarget: boolean,
+  divergences: boolean
 ): boolean {
   const labelLength = displayWidth(label);
 
@@ -367,11 +377,11 @@ function tryPlaceOnSegment(
           [midY, x1 - labelLength],
         ];
 
-    for (const [row, col] of sides) if (tryPlaceLabel(canvas, row, col, label, placed)) return true;
+    for (const [row, col] of sides) if (tryPlaceLabel(canvas, row, col, label, placed, divergences)) return true;
     for (let offset = 1; offset < LABEL_SEARCH; offset++) {
       for (const [row, col] of sides) {
-        if (tryPlaceLabel(canvas, row - offset, col, label, placed)) return true;
-        if (tryPlaceLabel(canvas, row + offset, col, label, placed)) return true;
+        if (tryPlaceLabel(canvas, row - offset, col, label, placed, divergences)) return true;
+        if (tryPlaceLabel(canvas, row + offset, col, label, placed, divergences)) return true;
       }
     }
     return false;
@@ -382,8 +392,8 @@ function tryPlaceOnSegment(
     if (length >= labelLength + 2) {
       const mid = Math.floor((Math.min(x1, x2) + Math.max(x1, x2)) / 2);
       const start = mid - Math.floor(labelLength / 2);
-      if (tryPlaceLabel(canvas, y1 - 1, start, label, placed)) return true;
-      if (tryPlaceLabel(canvas, y1 + 1, start, label, placed)) return true;
+      if (tryPlaceLabel(canvas, y1 - 1, start, label, placed, divergences)) return true;
+      if (tryPlaceLabel(canvas, y1 + 1, start, label, placed, divergences)) return true;
       return false;
     }
   }
@@ -395,7 +405,7 @@ function tryPlaceOnSegment(
  * A label on the best segment of its path: after the LAST TURN first, since that stretch belongs to this edge alone
  * and the trunk before it may be shared with its siblings.
  */
-function drawEdgeLabel(canvas: Canvas, re: RoutedEdge, placed: PlacedLabel[]): void {
+function drawEdgeLabel(canvas: Canvas, re: RoutedEdge, placed: PlacedLabel[], divergences: boolean): void {
   const label = re.label;
   if (label === "") return;
   const path = re.drawPath;
@@ -418,15 +428,25 @@ function drawEdgeLabel(canvas: Canvas, re: RoutedEdge, placed: PlacedLabel[]): v
     const [x1, y1] = path[i] as Point;
     const [x2, y2] = path[i + 1] as Point;
     const prev = i > 0 ? (path[i - 1] as Point) : null;
-    if (tryPlaceOnSegment(canvas, x1, y1, x2, y2, label, placed, prev, straight, straight)) return;
+    if (tryPlaceOnSegment(canvas, x1, y1, x2, y2, label, placed, prev, straight, straight, divergences)) return;
   }
 
-  // Nowhere clear was found. The label still goes on the canvas, but CUT to the room there actually is and marked as
-  // cut, since a silent truncation reads as a shorter label and not as a missing one.
-  // Nowhere along the path was clear. The rows around its middle are tried in turn, whole label first, because a
-  // label moved a row from its edge still reads and a label dropped does not. Only when none of them has the room
-  // does it go down CUT, and marked as cut: a silent truncation reads as a shorter label, never as a missing one.
   const [mx, my] = path[Math.floor(path.length / 2)] as Point;
+  if (!divergences) {
+    const row = Math.max(0, my - 1);
+    const col = mx + 1;
+    const colEnd = col + displayWidth(label);
+    const neededWidth = colEnd + 1;
+    const neededHeight = row + 1;
+    if (neededWidth > canvas.width || neededHeight > canvas.height) {
+      canvas.resize(Math.max(canvas.width, neededWidth), Math.max(canvas.height, neededHeight));
+    }
+    canvas.putText(row, col, label, STYLE_EDGE_LABEL);
+    placed.push([row, col, colEnd]);
+    return;
+  }
+
+  // ◉ When `divergences: true`, never land inside a node box or on an arrowhead, and mark truncations with `…`.
   const col = mx + 1;
   const rows: number[] = [my - 1];
   for (let off = 1; off <= LABEL_SEARCH; off++) rows.push(my - 1 - off, my - 1 + off);
@@ -451,7 +471,14 @@ function drawEdgeLabel(canvas: Canvas, re: RoutedEdge, placed: PlacedLabel[]): v
  * Every edge, in three passes: the lines and their corners, then the heads and tees so a later edge's line cannot
  * bury them, then the labels on top of the lot.
  */
-function drawEdges(canvas: Canvas, graph: Graph, routed: RoutedEdge[], cs: CharSet, rounded: boolean): void {
+function drawEdges(
+  canvas: Canvas,
+  graph: Graph,
+  routed: RoutedEdge[],
+  cs: CharSet,
+  rounded: boolean,
+  divergences: boolean
+): void {
   for (const re of routed) {
     if (re.drawPath.length < 2) continue;
     const key = edgeStyleKey(graph, re);
@@ -515,7 +542,7 @@ function drawEdges(canvas: Canvas, graph: Graph, routed: RoutedEdge[], cs: CharS
 
   const placed: PlacedLabel[] = [];
   for (const re of routed) {
-    if (re.label !== "" && re.drawPath.length >= 2) drawEdgeLabel(canvas, re, placed);
+    if (re.label !== "" && re.drawPath.length >= 2) drawEdgeLabel(canvas, re, placed, divergences);
   }
 }
 

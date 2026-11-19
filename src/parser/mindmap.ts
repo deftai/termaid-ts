@@ -5,12 +5,19 @@ import { lstrip, pyStrip, rstrip, splitLines } from "../pycompat.ts";
 
 const COMMENT = "%%";
 
+/** Python's exact shape-stripping patterns (anchored at start of label, no id prefix). */
+const REFERENCE_SHAPES: readonly RegExp[] = [
+  /^\((.+)\)$/,
+  /^\[(.+)\]$/,
+  /^\{\{(.+)\}\}$/,
+  /^\)(.+)\($/,
+];
+
 /**
- * The shape a mermaid author may wrap a label in, none of which a mindmap draws: only the text inside is kept. An id
- * may sit in front of any of them and goes with the delimiters. The circle is tried first, opening as the rounded
- * square does.
+ * ◉ Extended shape-stripping patterns (enabled with `divergences: true`): an id may sit in front of any of Mermaid's
+ * six mindmap shapes, and `((circle))` is tried before `(round)` so it does not leave a stray paren.
  */
-const SHAPES: readonly RegExp[] = [
+const DIVERGENT_SHAPES: readonly RegExp[] = [
   /^[\w-]*\(\((.+)\)\)$/,
   /^[\w-]*\[(.+)\]$/,
   /^[\w-]*\{\{(.+)\}\}$/,
@@ -20,10 +27,12 @@ const SHAPES: readonly RegExp[] = [
 ];
 
 /** A mermaid mindmap definition. */
-export function parseMindmap(text: string): Mindmap {
+export function parseMindmap(text: string, divergences = false): Mindmap {
   const lines = splitLines(pyStrip(text));
   const mindmap = makeMindmap();
   if (lines.length === 0) return mindmap;
+
+  const shapes = divergences ? DIVERGENT_SHAPES : REFERENCE_SHAPES;
 
   const body: Array<readonly [number, string]> = [];
   for (let line of lines.slice(1)) {
@@ -34,7 +43,7 @@ export function parseMindmap(text: string): Mindmap {
     if (pyStrip(stripped) === "") continue;
 
     let label = pyStrip(stripped);
-    for (const shape of SHAPES) {
+    for (const shape of shapes) {
       const wrapped = shape.exec(label);
       if (wrapped !== null) {
         label = wrapped[1] as string;

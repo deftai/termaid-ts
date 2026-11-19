@@ -78,15 +78,18 @@ function drawn(source: string, width: number, theme: string | null): Promise<str
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  const missingOnly = process.argv.includes("--missing-only");
   fs.mkdirSync(EXPECTED, { recursive: true });
   const tasks: Array<() => Promise<void>> = [];
   for (const name of sources()) {
     const source = fs.readFileSync(sourcePath(name), "utf8");
     for (const width of WIDTHS) {
       for (const theme of [null, THEME]) {
+        const outPath = expectedPath(name, width, theme);
+        if (missingOnly && fs.existsSync(outPath)) continue;
         tasks.push(async () => {
           const out = await drawn(source, width, theme);
-          fs.writeFileSync(expectedPath(name, width, theme), out);
+          fs.writeFileSync(outPath, out);
         });
       }
     }

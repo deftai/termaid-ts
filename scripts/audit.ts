@@ -153,7 +153,7 @@ let tokens = 0;
 for (const subject of SUBJECTS) {
   let drawn: string;
   try {
-    drawn = render(subject.source, { width: WIDE });
+    drawn = render(subject.source, { width: WIDE, divergences: true });
   } catch (e) {
     findings.push({ type: subject.type, shape: subject.shape, token: "-", verdict: "ABSENT", detail: `LEVE : ${(e as Error).message}` });
     continue;

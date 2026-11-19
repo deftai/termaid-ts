@@ -22,7 +22,7 @@ const STYLE_EDGE_LABEL = "edge_label";
 /** One per quadrant, numbered as the reference numbers them: top right, top left, bottom left, bottom right. */
 const sectionStyle = (index: number): string => `section:${index}`;
 
-export function renderQuadrant(diagram: QuadrantChart, useAscii = false): Canvas {
+export function renderQuadrant(diagram: QuadrantChart, useAscii = false, divergences = false): Canvas {
   const horizontal = useAscii ? "-" : "─";
   const vertical = useAscii ? "|" : "│";
   const cross = useAscii ? "+" : "┼";
@@ -82,10 +82,9 @@ export function renderQuadrant(diagram: QuadrantChart, useAscii = false): Canvas
     xLabelLine = BLANK.repeat(Math.max(0, pad)) + diagram.xLabel;
   }
 
-  // ◉ The y-axis label, which the reference parses into the model and then never reads: `renderer/quadrant.py:15`
-  // even reserves this chart's left margin for it and writes nothing there. Given a line of its own above the grid,
-  // marked with the axis it names, so a chart that declares no y-axis is not moved by a single byte.
-  const yLabelLine = diagram.yLabel === "" ? "" : `${useAscii ? Y_MARK_ASCII : Y_MARK} ${diagram.yLabel}`;
+  // ◉ The y-axis label (only drawn when `divergences: true`; the reference leaves it out).
+  const yLabelLine =
+    !divergences || diagram.yLabel === "" ? "" : `${useAscii ? Y_MARK_ASCII : Y_MARK} ${diagram.yLabel}`;
   const yRows = yLabelLine === "" ? 0 : 1;
 
   const height = titleLines.length + yRows + CHART_H + (xLabelLine !== "" ? 2 : 0);
