@@ -1,7 +1,6 @@
 // Ported from src/termaid/renderer/classdiagram.py.
 //
-// Classes are laid out in layers walked out from the ones nothing inherits from, notes push the whole drawing over to
-// make room, and the boxes are drawn LAST so a relationship never runs across one.
+// Renders a ClassDiagram directly to a Canvas using layered layout.
 
 import {
   DASHED,
@@ -14,21 +13,14 @@ import {
 import { pyCompare } from "../pycompat.ts";
 import { displayWidth } from "../utils.ts";
 import { Canvas } from "./canvas.ts";
-import { ASCII, UNICODE, type CharSet } from "./charset.ts";
+import { defaultCharset, type CharSet } from "./charset.ts";
+import { assignTracks } from "./relation_tracks.ts";
 
 const CLASS_PAD = 2;
 const MIN_BOX_WIDTH = 16;
 const SIBLING_GAP = 4;
 const MARGIN = 2;
 const EMPTY_SIZE = 1;
-
-/** Blank columns kept around a label written between two classes. */
-const LABEL_ROOM = 4;
-/** Columns two relationships leaving the same class are pulled apart by. */
-const EXIT_SPREAD = 3;
-/** Blank columns inside a note's border, and the room a note is given beside what it belongs to. */
-const NOTE_PAD = 2;
-const NOTE_ROOM = 2;
 
 const STYLE_NODE = "node";
 const STYLE_LABEL = "label";
@@ -38,140 +30,129 @@ const STYLE_ARROW = "arrow";
 const STYLE_NOTE = "note";
 
 const LR = "LR";
-const KEY_SEP = " ";
-const SIDE_SIDE = "side";
-const SIDE_BOTTOM = "bottom";
-
-/** What wraps an annotation on screen, which mermaid draws in guillemets. */
 const ANNOTATION_OPEN = "«";
 const ANNOTATION_CLOSE = "»";
-
-/** A note's text is one string, and a literal backslash-n inside it is where it breaks. */
 const NOTE_BREAK = "\\n";
 
-/** Which way an end of a relationship points, which is what picks the marker drawn there. */
 type Heading = "up" | "down" | "left" | "right";
+type Phase = "all" | "lines" | "text";
 
-const INHERITANCE: Readonly<Record<Heading, string>> = { down: "▽", up: "△", right: "▷", left: "◁" };
-const DEPENDENCY: Readonly<Record<Heading, string>> = { down: "▼", up: "▲", right: "►", left: "◄" };
-const COMPOSITION = "◆";
-const AGGREGATION = "◇";
-
-const ASCII_ARROW_IN = "<";
-const ASCII_ARROW_OUT = ">";
-
-function markerChar(marker: string, heading: Heading): string {
-  if (marker === "|>" || marker === "<|") return INHERITANCE[heading];
-  if (marker === ">" || marker === "<") return DEPENDENCY[heading];
-  if (marker === "*") return COMPOSITION;
-  if (marker === "o") return AGGREGATION;
-  return "";
+function pairKey(a: string, b: string): string {
+  return pyCompare(a, b) <= 0 ? `${a}\0${b}` : `${b}\0${a}`;
 }
 
 function formatMember(member: Member): string {
-  let text = "";
-  if (member.visibility !== "") text += member.visibility;
-  if (member.returnType !== "" && !member.isMethod) text += `${member.returnType} `;
-  text += member.name;
-  if (member.isMethod && member.returnType !== "") text += ` ${member.returnType}`;
-  if (member.classifier !== "") text += member.classifier;
-  return text;
+  const parts: string[] = [];
+  if (member.visibility !== "") parts.push(member.visibility);
+  if (member.returnType !== "" && !member.isMethod) parts.push(`${member.returnType} `);
+  parts.push(member.name);
+  if (member.isMethod && member.returnType !== "") parts.push(` ${member.returnType}`);
+  if (member.classifier !== "") parts.push(member.classifier);
+  return parts.join("");
 }
 
-const annotationText = (cls: ClassDef): string => `${ANNOTATION_OPEN}${cls.annotation}${ANNOTATION_CLOSE}`;
+function computeBoxSize(cls: ClassDef, paddingX = CLASS_PAD): [number, number] {
+  const lines: string[] = [];
+  if (cls.annotation !== "") lines.push(`${ANNOTATION_OPEN}${cls.annotation}${ANNOTATION_CLOSE}`);
+  lines.push(cls.name);
 
-/** The attributes and the methods of a class, in the two runs a box draws them in. */
-const partitioned = (cls: ClassDef): [Member[], Member[]] => [
-  cls.members.filter((member) => !member.isMethod),
-  cls.members.filter((member) => member.isMethod),
-];
+  const attributes = cls.members.filter((m) => !m.isMethod);
+  const methods = cls.members.filter((m) => m.isMethod);
+  const memberLines = [...attributes.map(formatMember), ...methods.map(formatMember)];
+  const allLines = [...lines, ...memberLines];
 
-function boxSize(cls: ClassDef, paddingX: number): [number, number] {
-  const heading = cls.annotation !== "" ? [annotationText(cls), cls.name] : [cls.name];
-  const [attributes, methods] = partitioned(cls);
-  const rows = [...heading, ...attributes.map(formatMember), ...methods.map(formatMember)];
+  const maxText = allLines.length > 0 ? Math.max(...allLines.map(displayWidth)) : 0;
+  const width = Math.max(maxText + paddingX * 2, MIN_BOX_WIDTH);
 
-  const widest = rows.length === 0 ? 0 : Math.max(...rows.map(displayWidth));
-  const width = Math.max(widest + paddingX * 2, MIN_BOX_WIDTH);
-
-  let height = 2 + heading.length;
-  if (attributes.length > 0 || methods.length > 0) {
-    height += 1 + attributes.length + methods.length;
-    if (attributes.length > 0 && methods.length > 0) height += 1;
+  let height = 2 + lines.length;
+  const hasAttrs = attributes.length > 0;
+  const hasMethods = methods.length > 0;
+  if (hasAttrs || hasMethods) {
+    height += 1 + attributes.length;
+    if (hasAttrs && hasMethods) height += 1;
+    height += methods.length;
   }
   return [width, height];
 }
 
-/** The four borders of a box, which a class and a note are both drawn inside. */
-function drawFrame(canvas: Canvas, x: number, y: number, width: number, height: number, cs: CharSet, style: string) {
-  canvas.put(y, x, cs.topLeft, true, style);
-  canvas.put(y, x + width - 1, cs.topRight, true, style);
-  canvas.put(y + height - 1, x, cs.bottomLeft, true, style);
-  canvas.put(y + height - 1, x + width - 1, cs.bottomRight, true, style);
-  for (let c = x + 1; c < x + width - 1; c++) {
-    canvas.put(y, c, cs.horizontal, true, style);
-    canvas.put(y + height - 1, c, cs.horizontal, true, style);
-  }
+function drawClassBox(
+  canvas: Canvas,
+  x: number,
+  y: number,
+  cls: ClassDef,
+  cs: CharSet,
+  paddingX = CLASS_PAD
+): [number, number] {
+  const [width, height] = computeBoxSize(cls, paddingX);
+
+  canvas.put(y, x, cs.topLeft, true, STYLE_NODE);
+  for (let c = x + 1; c < x + width - 1; c++) canvas.put(y, c, cs.horizontal, true, STYLE_NODE);
+  canvas.put(y, x + width - 1, cs.topRight, true, STYLE_NODE);
+
+  canvas.put(y + height - 1, x, cs.bottomLeft, true, STYLE_NODE);
+  for (let c = x + 1; c < x + width - 1; c++) canvas.put(y + height - 1, c, cs.horizontal, true, STYLE_NODE);
+  canvas.put(y + height - 1, x + width - 1, cs.bottomRight, true, STYLE_NODE);
+
   for (let r = y + 1; r < y + height - 1; r++) {
-    canvas.put(r, x, cs.vertical, true, style);
-    canvas.put(r, x + width - 1, cs.vertical, true, style);
+    canvas.put(r, x, cs.vertical, true, STYLE_NODE);
+    canvas.put(r, x + width - 1, cs.vertical, true, STYLE_NODE);
   }
-}
-
-function drawDivider(canvas: Canvas, row: number, x: number, width: number, cs: CharSet): void {
-  canvas.put(row, x, cs.teeRight, true, STYLE_NODE);
-  for (let c = x + 1; c < x + width - 1; c++) canvas.put(row, c, cs.horizontal, true, STYLE_NODE);
-  canvas.put(row, x + width - 1, cs.teeLeft, true, STYLE_NODE);
-}
-
-function drawClassBox(canvas: Canvas, x: number, y: number, cls: ClassDef, cs: CharSet, paddingX: number): void {
-  const [width, height] = boxSize(cls, paddingX);
-  drawFrame(canvas, x, y, width, height, cs, STYLE_NODE);
 
   let row = y + 1;
   if (cls.annotation !== "") {
-    const text = annotationText(cls);
-    canvas.putText(row, x + Math.floor((width - displayWidth(text)) / 2), text, STYLE_LABEL);
+    const annText = `${ANNOTATION_OPEN}${cls.annotation}${ANNOTATION_CLOSE}`;
+    const annCol = x + Math.floor((width - displayWidth(annText)) / 2);
+    canvas.putText(row, annCol, annText, STYLE_LABEL);
     row += 1;
   }
-  canvas.putText(row, x + Math.floor((width - displayWidth(cls.name)) / 2), cls.name, STYLE_LABEL);
+
+  const nameCol = x + Math.floor((width - displayWidth(cls.name)) / 2);
+  canvas.putText(row, nameCol, cls.name, STYLE_LABEL);
   row += 1;
 
-  const [attributes, methods] = partitioned(cls);
-  if (attributes.length === 0 && methods.length === 0) return;
+  const attributes = cls.members.filter((m) => !m.isMethod);
+  const methods = cls.members.filter((m) => m.isMethod);
+  const hasAttrs = attributes.length > 0;
+  const hasMethods = methods.length > 0;
 
-  drawDivider(canvas, row, x, width, cs);
-  row += 1;
-  for (const member of attributes) {
-    canvas.putText(row, x + paddingX, formatMember(member), STYLE_LABEL);
+  if (hasAttrs || hasMethods) {
+    canvas.put(row, x, cs.teeRight, true, STYLE_NODE);
+    for (let c = x + 1; c < x + width - 1; c++) canvas.put(row, c, cs.horizontal, true, STYLE_NODE);
+    canvas.put(row, x + width - 1, cs.teeLeft, true, STYLE_NODE);
     row += 1;
+
+    for (const m of attributes) {
+      canvas.putText(row, x + paddingX, formatMember(m), STYLE_LABEL);
+      row += 1;
+    }
+
+    if (hasAttrs && hasMethods) {
+      canvas.put(row, x, cs.teeRight, true, STYLE_NODE);
+      for (let c = x + 1; c < x + width - 1; c++) canvas.put(row, c, cs.horizontal, true, STYLE_NODE);
+      canvas.put(row, x + width - 1, cs.teeLeft, true, STYLE_NODE);
+      row += 1;
+    }
+
+    for (const m of methods) {
+      canvas.putText(row, x + paddingX, formatMember(m), STYLE_LABEL);
+      row += 1;
+    }
   }
-  if (attributes.length > 0 && methods.length > 0) {
-    drawDivider(canvas, row, x, width, cs);
-    row += 1;
-  }
-  for (const member of methods) {
-    canvas.putText(row, x + paddingX, formatMember(member), STYLE_LABEL);
-    row += 1;
-  }
+
+  return [width, height];
 }
 
-/**
- * The classes in layers, walked out breadth first from the ones nothing points at. The marker names the PARENT:
- * `Animal <|-- Duck` and `Duck --|> Animal` both make Animal the one Duck hangs under.
- */
 function assignLayers(diagram: ClassDiagram): string[][] {
-  const names = [...diagram.classes.keys()];
-  if (names.length === 0) return [];
+  const classNames = [...diagram.classes.keys()];
+  if (classNames.length === 0) return [];
 
-  const children = new Map<string, string[]>(names.map((name) => [name, []]));
+  const children = new Map<string, string[]>(classNames.map((n) => [n, []]));
   const hasParent = new Set<string>();
 
   for (const rel of diagram.relationships) {
     if (rel.sourceMarker === "<|" || rel.targetMarker === "|>") {
-      const inherits = rel.sourceMarker === "<|";
-      const parent = inherits ? rel.source : rel.target;
-      const child = inherits ? rel.target : rel.source;
+      const parent = rel.sourceMarker === "<|" ? rel.source : rel.target;
+      const child = rel.sourceMarker === "<|" ? rel.target : rel.source;
       children.get(parent)?.push(child);
       hasParent.add(child);
     } else {
@@ -180,118 +161,295 @@ function assignLayers(diagram: ClassDiagram): string[][] {
     }
   }
 
-  let roots = names.filter((name) => !hasParent.has(name));
-  if (roots.length === 0) roots = [names[0] as string];
+  let roots = classNames.filter((n) => !hasParent.has(n));
+  if (roots.length === 0) roots = [classNames[0] as string];
 
   const assigned = new Set<string>(roots);
   const layers: string[][] = [];
-  let queue = roots;
+  let queue: string[] = [...roots];
 
   while (queue.length > 0) {
-    const layer = queue;
+    const layer = [...queue];
     layers.push(layer);
-    queue = [];
+    const nextQueue: string[] = [];
     for (const node of layer) {
       for (const child of children.get(node) ?? []) {
         if (!assigned.has(child)) {
           assigned.add(child);
-          queue.push(child);
+          nextQueue.push(child);
         }
       }
     }
+    queue = nextQueue;
   }
 
-  const loose = names.filter((name) => !assigned.has(name));
-  if (loose.length > 0) layers.push(loose);
+  const disconnected = classNames.filter((n) => !assigned.has(n));
+  if (disconnected.length > 0) layers.push(disconnected);
+
   return layers;
 }
 
-const pairKey = (a: string, b: string): string => (pyCompare(a, b) <= 0 ? `${a}${KEY_SEP}${b}` : `${b}${KEY_SEP}${a}`);
+function computeExitOffsets(
+  diagram: ClassDiagram,
+  layerOf: ReadonlyMap<string, number>,
+  end: "source" | "target" = "source"
+): Map<number, number> {
+  const groups = new Map<string, number[]>();
+  diagram.relationships.forEach((rel, i) => {
+    const sLayer = layerOf.get(rel.source) ?? -1;
+    const tLayer = layerOf.get(rel.target) ?? -2;
+    const side = sLayer === tLayer ? "side" : "bottom";
+    const cls = end === "source" ? rel.source : rel.target;
+    const key = `${cls}\0${side}`;
+    let bucket = groups.get(key);
+    if (bucket === undefined) {
+      bucket = [];
+      groups.set(key, bucket);
+    }
+    bucket.push(i);
+  });
 
-interface Layout {
+  const offsets = new Map<number, number>();
+  for (const indices of groups.values()) {
+    if (indices.length <= 1) {
+      for (const idx of indices) offsets.set(idx, 0);
+      continue;
+    }
+    const n = indices.length;
+    const widest = Math.max(
+      ...indices.map((idx) => {
+        const rel = diagram.relationships[idx] as Relationship;
+        const card = end === "source" ? rel.sourceCard : rel.targetCard;
+        return [...(card || "")].length;
+      })
+    );
+    const spacing = Math.max(4, widest + 2);
+    indices.forEach((idx, j) => {
+      offsets.set(idx, (j - (n - 1) / 2) * spacing);
+    });
+  }
+  return offsets;
+}
+
+function computeRowOffsets(diagram: ClassDiagram, layerOf: ReadonlyMap<string, number>): Map<number, number> {
+  const groups = new Map<string, number[]>();
+  diagram.relationships.forEach((rel, i) => {
+    if ((layerOf.get(rel.source) ?? -1) !== (layerOf.get(rel.target) ?? -2)) return;
+    const key = pairKey(rel.source, rel.target);
+    let bucket = groups.get(key);
+    if (bucket === undefined) {
+      bucket = [];
+      groups.set(key, bucket);
+    }
+    bucket.push(i);
+  });
+
+  const offsets = new Map<number, number>();
+  for (const indices of groups.values()) {
+    const n = indices.length;
+    indices.forEach((idx, j) => {
+      offsets.set(idx, 2 * j - (n - 1));
+    });
+  }
+  return offsets;
+}
+
+function assignGapTracks(
+  diagram: ClassDiagram,
+  layerOf: ReadonlyMap<string, number>,
+  positions: ReadonlyMap<string, readonly [number, number]>,
+  sizes: ReadonlyMap<string, readonly [number, number]>
+): [Map<number, [number, number]>, Map<number, number>] {
+  const exitOffsets = computeExitOffsets(diagram, layerOf, "source");
+  const entryOffsets = computeExitOffsets(diagram, layerOf, "target");
+  const intervals = new Map<number, Map<number, [number, number]>>();
+  const hanging = new Map<number, boolean>();
+
+  diagram.relationships.forEach((rel, i) => {
+    const srcPos = positions.get(rel.source);
+    const tgtPos = positions.get(rel.target);
+    const srcSize = sizes.get(rel.source);
+    const tgtSize = sizes.get(rel.target);
+    if (srcPos === undefined || tgtPos === undefined || srcSize === undefined || tgtSize === undefined) return;
+    const ls = layerOf.get(rel.source) ?? -1;
+    const lt = layerOf.get(rel.target) ?? -2;
+    if (Math.abs(ls - lt) !== 1) return;
+
+    const startCol = srcPos[0] + Math.floor(srcSize[0] / 2) + Math.trunc(exitOffsets.get(i) ?? 0);
+    const endCol = tgtPos[0] + Math.floor(tgtSize[0] / 2) + Math.trunc(entryOffsets.get(i) ?? 0);
+    if (startCol === endCol) return;
+
+    const boundary = Math.min(ls, lt);
+    const left = Math.min(startCol, endCol);
+    let right = Math.max(startCol, endCol);
+    const labelWidth = rel.label !== "" ? displayWidth(rel.label) : 0;
+    const isHanging = labelWidth > 0 && right - left - 2 < labelWidth;
+    hanging.set(i, isHanging);
+    if (isHanging) {
+      right = Math.max(right, endCol + 2 + labelWidth);
+    }
+    let runs = intervals.get(boundary);
+    if (runs === undefined) {
+      runs = new Map();
+      intervals.set(boundary, runs);
+    }
+    runs.set(i, [left, right]);
+  });
+
+  const rows = new Map<number, [number, number]>();
+  const gapHeights = new Map<number, number>();
+  for (const [boundary, runs] of intervals) {
+    const tracks = assignTracks(runs);
+    const maxTrack = Math.max(...tracks.values());
+    const heights = Array.from({ length: maxTrack + 1 }, () => 1);
+    for (const [index, track] of tracks) {
+      if (hanging.get(index) === true) heights[track] = 2;
+    }
+    const offsets = [1];
+    for (const h of heights) offsets.push((offsets[offsets.length - 1] as number) + h);
+    for (const [index, track] of tracks) {
+      rows.set(index, [boundary, offsets[track] as number]);
+    }
+    gapHeights.set(boundary, (offsets[offsets.length - 1] as number) - 1);
+  }
+  return [rows, gapHeights];
+}
+
+interface ClassLayout {
   positions: Map<string, [number, number]>;
   sizes: Map<string, [number, number]>;
   width: number;
   height: number;
   layerOf: Map<string, number>;
+  runRows: Map<number, number>;
 }
 
-function computeLayout(diagram: ClassDiagram, paddingX: number, gap: number): Layout {
+function computeLayout(diagram: ClassDiagram, paddingX = CLASS_PAD, gap = SIBLING_GAP): ClassLayout {
   const layers = assignLayers(diagram);
-  const positions = new Map<string, [number, number]>();
-  const sizes = new Map<string, [number, number]>();
-  const layerOf = new Map<string, number>();
-  if (layers.length === 0) return { positions, sizes, width: EMPTY_SIZE, height: EMPTY_SIZE, layerOf };
+  if (layers.length === 0) {
+    return {
+      positions: new Map(),
+      sizes: new Map(),
+      width: 1,
+      height: 1,
+      layerOf: new Map(),
+      runRows: new Map(),
+    };
+  }
 
-  for (const [name, cls] of diagram.classes) sizes.set(name, boxSize(cls, paddingX));
-  layers.forEach((layer, index) => {
-    for (const name of layer) layerOf.set(name, index);
+  const sizes = new Map<string, [number, number]>();
+  for (const [name, cls] of diagram.classes) {
+    sizes.set(name, computeBoxSize(cls, paddingX));
+  }
+
+  const layerOf = new Map<string, number>();
+  layers.forEach((layer, li) => {
+    for (const name of layer) layerOf.set(name, li);
   });
 
   const pairGap = new Map<string, number>();
   for (const rel of diagram.relationships) {
-    const source = layerOf.get(rel.source);
-    const target = layerOf.get(rel.target);
-    if (source === undefined || target === undefined || source !== target) continue;
-    const needed = Math.max(rel.label !== "" ? displayWidth(rel.label) + LABEL_ROOM : gap, gap);
-    const key = pairKey(rel.source, rel.target);
-    pairGap.set(key, Math.max(pairGap.get(key) ?? gap, needed));
+    const s = rel.source;
+    const t = rel.target;
+    if (layerOf.has(s) && layerOf.has(t) && layerOf.get(s) === layerOf.get(t)) {
+      const pairG = Math.max(rel.label !== "" ? displayWidth(rel.label) + 4 : gap, gap);
+      const key = pairKey(s, t);
+      pairGap.set(key, Math.max(pairGap.get(key) ?? gap, pairG));
+    }
   }
 
-  const isLR = diagram.direction === LR;
-  let width: number;
-  let height: number;
+  const isLr = diagram.direction === LR;
+  const positions = new Map<string, [number, number]>();
+  const runRows = new Map<number, number>();
+  let canvasWidth = 1;
+  let canvasHeight = 1;
 
-  if (isLR) {
-    let columnX = MARGIN;
-    let tallest = 0;
+  if (isLr) {
+    let colX = MARGIN;
+    let maxHeight = 0;
     for (const layer of layers) {
-      const layerWidth = Math.max(...layer.map((name) => (sizes.get(name) as [number, number])[0]));
+      const layerWidth = Math.max(...layer.map((n) => (sizes.get(n) as [number, number])[0]));
       let rowY = MARGIN;
       for (const name of layer) {
         const [w, h] = sizes.get(name) as [number, number];
-        positions.set(name, [columnX + Math.floor((layerWidth - w) / 2), rowY]);
+        const xOffset = Math.floor((layerWidth - w) / 2);
+        positions.set(name, [colX + xOffset, rowY]);
         rowY += h + gap;
       }
-      tallest = Math.max(tallest, rowY - gap + MARGIN);
-      columnX += layerWidth + gap;
+      const totalLayerHeight = rowY - gap + MARGIN;
+      maxHeight = Math.max(maxHeight, totalLayerHeight);
+      colX += layerWidth + gap;
     }
-    width = columnX - gap + MARGIN;
-    height = tallest;
-  } else {
-    let rowY = MARGIN;
-    let widest = 0;
+    canvasWidth = colX - gap + MARGIN;
+    canvasHeight = maxHeight;
+
     for (const layer of layers) {
-      const layerHeight = Math.max(...layer.map((name) => (sizes.get(name) as [number, number])[1]));
-      let columnX = MARGIN;
-      layer.forEach((name, index) => {
-        const [w, h] = sizes.get(name) as [number, number];
-        positions.set(name, [columnX, rowY + Math.floor((layerHeight - h) / 2)]);
-        const next = layer[index + 1];
-        columnX += next === undefined ? w : w + (pairGap.get(pairKey(name, next)) ?? gap);
+      const layerH =
+        layer.reduce((sum, n) => sum + (sizes.get(n) as [number, number])[1], 0) + gap * (layer.length - 1);
+      const offset = Math.floor((canvasHeight - 2 * MARGIN - layerH) / 2);
+      if (offset > 0) {
+        for (const name of layer) {
+          const [x, y] = positions.get(name) as [number, number];
+          positions.set(name, [x, y + offset]);
+        }
+      }
+    }
+  } else {
+    const layerHeights: number[] = [];
+    let maxWidth = 0;
+    for (const layer of layers) {
+      layerHeights.push(Math.max(...layer.map((n) => (sizes.get(n) as [number, number])[1])));
+      let colX = MARGIN;
+      layer.forEach((name, idx) => {
+        const [w] = sizes.get(name) as [number, number];
+        positions.set(name, [colX, 0]);
+        if (idx < layer.length - 1) {
+          const nextName = layer[idx + 1] as string;
+          colX += w + (pairGap.get(pairKey(name, nextName)) ?? gap);
+        } else {
+          colX += w;
+        }
       });
-      widest = Math.max(widest, columnX + MARGIN);
-      rowY += layerHeight + gap;
+      maxWidth = Math.max(maxWidth, colX + MARGIN);
     }
-    width = widest;
-    height = rowY - gap + MARGIN;
+    canvasWidth = maxWidth;
+
+    for (const layer of layers) {
+      const minX = Math.min(...layer.map((n) => (positions.get(n) as [number, number])[0]));
+      const maxX = Math.max(
+        ...layer.map((n) => (positions.get(n) as [number, number])[0] + (sizes.get(n) as [number, number])[0])
+      );
+      const offset = Math.floor((canvasWidth - 2 * MARGIN - (maxX - minX)) / 2);
+      if (offset > 0) {
+        for (const name of layer) {
+          positions.set(name, [(positions.get(name) as [number, number])[0] + offset, 0]);
+        }
+      }
+    }
+
+    const [tracks, gapHeights] = assignGapTracks(diagram, layerOf, positions, sizes);
+    const layerTops: number[] = [];
+    let rowY = MARGIN;
+    layers.forEach((layer, li) => {
+      layerTops.push(rowY);
+      const layerHeight = layerHeights[li] as number;
+      for (const name of layer) {
+        const [x] = positions.get(name) as [number, number];
+        const [, h] = sizes.get(name) as [number, number];
+        positions.set(name, [x, rowY + Math.floor((layerHeight - h) / 2)]);
+      }
+      rowY += layerHeight + Math.max(gap, (gapHeights.get(li) ?? 0) + 2);
+    });
+    canvasHeight = (layerTops[layerTops.length - 1] as number) + (layerHeights[layerHeights.length - 1] as number) + MARGIN;
+
+    for (const [index, [boundary, offset]] of tracks) {
+      runRows.set(index, (layerTops[boundary] as number) + (layerHeights[boundary] as number) + offset);
+    }
   }
 
-  for (const layer of layers) {
-    const along = layer.reduce((sum, name) => sum + (sizes.get(name) as [number, number])[isLR ? 1 : 0], 0);
-    const span = along + gap * (layer.length - 1);
-    const offset = Math.floor(((isLR ? height : width) - 2 * MARGIN - span) / 2);
-    if (offset <= 0) continue;
-    for (const name of layer) {
-      const [x, y] = positions.get(name) as [number, number];
-      positions.set(name, isLR ? [x, y + offset] : [x + offset, y]);
-    }
-  }
-
-  return { positions, sizes, width, height, layerOf };
+  return { positions, sizes, width: canvasWidth, height: canvasHeight, layerOf, runRows };
 }
 
-/** A line between two points, straight where it can be and bent halfway down where it cannot. */
 function drawRoutedLine(
   canvas: Canvas,
   r1: number,
@@ -300,255 +458,347 @@ function drawRoutedLine(
   c2: number,
   hChar: string,
   vChar: string,
-  useAscii: boolean
+  useAscii: boolean,
+  style = STYLE_EDGE,
+  midRow: number | null = null
 ): void {
+  canvas.resize(Math.max(c1, c2) + 1, canvas.height);
   if (c1 === c2) {
-    canvas.drawVertical(c1, r1, r2, vChar, STYLE_EDGE);
-    return;
-  }
-  if (r1 === r2) {
-    canvas.drawHorizontal(r1, c1, c2, hChar, STYLE_EDGE);
-    return;
-  }
+    for (let r = Math.min(r1, r2); r <= Math.max(r1, r2); r++) canvas.put(r, c1, vChar, true, style);
+  } else if (r1 === r2) {
+    for (let c = Math.min(c1, c2); c <= Math.max(c1, c2); c++) canvas.put(r1, c, hChar, true, style);
+  } else {
+    const mid = midRow ?? Math.floor((r1 + r2) / 2);
+    for (let r = Math.min(r1, mid); r <= Math.max(r1, mid); r++) canvas.put(r, c1, vChar, true, style);
+    for (let c = Math.min(c1, c2); c <= Math.max(c1, c2); c++) canvas.put(mid, c, hChar, true, style);
+    for (let r = Math.min(mid, r2); r <= Math.max(mid, r2); r++) canvas.put(r, c2, vChar, true, style);
 
-  const midRow = Math.floor((r1 + r2) / 2);
-  canvas.drawVertical(c1, r1, midRow, vChar, STYLE_EDGE);
-  canvas.drawHorizontal(midRow, c1, c2, hChar, STYLE_EDGE);
-  canvas.drawVertical(c2, midRow, r2, vChar, STYLE_EDGE);
-  if (useAscii) return;
+    if (!useAscii) {
+      const corner1 = r1 < mid ? (c2 < c1 ? "┘" : "└") : c2 < c1 ? "┐" : "┌";
+      canvas.put(mid, c1, corner1, false, style);
+      const corner2 = r2 > mid ? (c2 < c1 ? "┌" : "┐") : c2 < c1 ? "└" : "┘";
+      canvas.put(mid, c2, corner2, false, style);
+    }
+  }
+}
 
-  // The corners go on after the lines, so a crossing edge does not merge into them.
-  const leftward = c2 < c1;
-  canvas.put(midRow, c1, r1 < midRow ? (leftward ? "┘" : "└") : leftward ? "┐" : "┌", false, STYLE_EDGE);
-  canvas.put(midRow, c2, r2 > midRow ? (leftward ? "┌" : "┐") : leftward ? "└" : "┘", false, STYLE_EDGE);
+function markerChar(marker: string, direction: Heading, cs: CharSet): string {
+  if (marker === "|>" || marker === "<|") {
+    if (direction === "down") return cs.inheritDown;
+    if (direction === "up") return cs.inheritUp;
+    if (direction === "right") return cs.inheritRight;
+    return cs.inheritLeft;
+  }
+  if (marker === ">" || marker === "<") {
+    if (direction === "down") return cs.dependencyDown;
+    if (direction === "up") return cs.dependencyUp;
+    if (direction === "right") return cs.dependencyRight;
+    return cs.dependencyLeft;
+  }
+  if (marker === "*") return "◆";
+  if (marker === "o") return "◇";
+  return "";
 }
 
 function drawRelationship(
   canvas: Canvas,
   rel: Relationship,
-  layout: Layout,
+  positions: ReadonlyMap<string, readonly [number, number]>,
+  sizes: ReadonlyMap<string, readonly [number, number]>,
+  layerOf: ReadonlyMap<string, number>,
   cs: CharSet,
   useAscii: boolean,
-  colOffset: number,
-  isLR: boolean
+  srcColOffset = 0,
+  tgtColOffset = 0,
+  isLr = false,
+  rowOffset = 0,
+  phase: Phase = "all",
+  runRow: number | null = null
 ): void {
-  const { positions, sizes, layerOf } = layout;
-  const source = positions.get(rel.source);
-  const target = positions.get(rel.target);
-  if (source === undefined || target === undefined) return;
+  const sPos = positions.get(rel.source);
+  const tPos = positions.get(rel.target);
+  const sSize = sizes.get(rel.source);
+  const tSize = sizes.get(rel.target);
+  if (sPos === undefined || tPos === undefined || sSize === undefined || tSize === undefined) return;
 
-  const [sx, sy] = source;
-  const [sw, sh] = sizes.get(rel.source) as [number, number];
-  const [tx, ty] = target;
-  const [tw, th] = sizes.get(rel.target) as [number, number];
+  const [sx, sy] = sPos;
+  const [sw, sh] = sSize;
+  const [tx, ty] = tPos;
+  const [tw, th] = tSize;
 
-  const sourceMidCol = sx + Math.floor(sw / 2);
-  const sourceMidRow = sy + Math.floor(sh / 2);
-  const targetMidCol = tx + Math.floor(tw / 2);
-  const targetMidRow = ty + Math.floor(th / 2);
+  const sCx = sx + Math.floor(sw / 2);
+  const sCy = sy + Math.floor(sh / 2);
+  const tCx = tx + Math.floor(tw / 2);
+  const tCy = ty + Math.floor(th / 2);
+  const dx = tCx - sCx;
+  const dy = tCy - sCy;
 
-  const sameLayer = (layerOf.get(rel.source) ?? -1) === (layerOf.get(rel.target) ?? -2);
-  const horizontal = isLR ? !sameLayer : sameLayer;
+  const sLayer = layerOf.get(rel.source) ?? -1;
+  const tLayer = layerOf.get(rel.target) ?? -2;
+  const sameLayer = sLayer === tLayer;
+  const useHorizontal = isLr ? !sameLayer : sameLayer;
 
   let startCol: number;
-  let startRow: number;
   let endCol: number;
+  let startRow: number;
   let endRow: number;
-  let sourceHeading: Heading;
-  let targetHeading: Heading;
+  let srcDir: Heading;
+  let tgtDir: Heading;
 
-  if (!horizontal) {
-    const downward = targetMidRow - sourceMidRow > 0;
-    startCol = sourceMidCol + colOffset;
-    startRow = downward ? sy + sh : sy - 1;
-    endCol = targetMidCol;
-    endRow = downward ? ty - 1 : ty + th;
-    // A marker points BACK at the end it belongs to, so the source's is the target's reversed.
-    sourceHeading = downward ? "up" : "down";
-    targetHeading = downward ? "down" : "up";
+  if (!useHorizontal) {
+    startCol = sCx + srcColOffset;
+    endCol = tCx + tgtColOffset;
+    if (dy > 0) {
+      startRow = sy + sh;
+      endRow = ty - 1;
+      srcDir = "up";
+      tgtDir = "down";
+    } else {
+      startRow = sy - 1;
+      endRow = ty + th;
+      srcDir = "down";
+      tgtDir = "up";
+    }
   } else {
-    const rightward = targetMidCol - sourceMidCol > 0;
-    startCol = rightward ? sx + sw : sx - 1;
-    startRow = sourceMidRow;
-    endCol = rightward ? tx - 1 : tx + tw;
-    endRow = targetMidRow;
-    sourceHeading = rightward ? "left" : "right";
-    targetHeading = rightward ? "right" : "left";
+    if (dx > 0) {
+      startCol = sx + sw;
+      endCol = tx - 1;
+      srcDir = "left";
+      tgtDir = "right";
+    } else {
+      startCol = sx - 1;
+      endCol = tx + tw;
+      srcDir = "right";
+      tgtDir = "left";
+    }
+    startRow = sCy;
+    endRow = tCy;
+    if (sameLayer) {
+      const lo = Math.max(sy + 1, ty + 1);
+      const hi = Math.min(sy + sh - 2, ty + th - 2);
+      if (lo <= hi) {
+        const row = Math.floor((sCy + tCy) / 2) + rowOffset;
+        startRow = Math.min(Math.max(row, lo), hi);
+        endRow = startRow;
+      }
+    }
   }
 
   const hChar = rel.lineStyle === DASHED ? cs.lineDottedH : cs.lineHorizontal;
   const vChar = rel.lineStyle === DASHED ? cs.lineDottedV : cs.lineVertical;
-  drawRoutedLine(canvas, startRow, startCol, endRow, endCol, hChar, vChar, useAscii);
 
-  if (!useAscii) {
-    const atSource = markerChar(rel.sourceMarker, sourceHeading);
-    const atTarget = markerChar(rel.targetMarker, targetHeading);
-    if (atSource !== "") canvas.put(startRow, startCol, atSource, false, STYLE_ARROW);
-    if (atTarget !== "") canvas.put(endRow, endCol, atTarget, false, STYLE_ARROW);
-  } else {
-    if (rel.sourceMarker === "<|" || rel.sourceMarker === "<") {
-      canvas.put(startRow, startCol, ASCII_ARROW_IN, false, STYLE_ARROW);
-    } else if (rel.sourceMarker === "*" || rel.sourceMarker === "o") {
-      canvas.put(startRow, startCol, rel.sourceMarker, false, STYLE_ARROW);
-    }
-    if (rel.targetMarker === "|>" || rel.targetMarker === ">") {
-      canvas.put(endRow, endCol, ASCII_ARROW_OUT, false, STYLE_ARROW);
-    } else if (rel.targetMarker === "*" || rel.targetMarker === "o") {
-      canvas.put(endRow, endCol, rel.targetMarker, false, STYLE_ARROW);
+  if (phase === "all" || phase === "lines") {
+    drawRoutedLine(canvas, startRow, startCol, endRow, endCol, hChar, vChar, useAscii, STYLE_EDGE, runRow);
+    if (!useAscii) {
+      const srcMarkerCh = markerChar(rel.sourceMarker, srcDir, cs);
+      const tgtMarkerCh = markerChar(rel.targetMarker, tgtDir, cs);
+      if (srcMarkerCh !== "") canvas.put(startRow, startCol, srcMarkerCh, false, STYLE_ARROW);
+      if (tgtMarkerCh !== "") canvas.put(endRow, endCol, tgtMarkerCh, false, STYLE_ARROW);
+    } else {
+      if (rel.sourceMarker === "<|" || rel.sourceMarker === "<") {
+        canvas.put(startRow, startCol, "<", false, STYLE_ARROW);
+      } else if (rel.sourceMarker === "*" || rel.sourceMarker === "o") {
+        canvas.put(startRow, startCol, rel.sourceMarker, false, STYLE_ARROW);
+      }
+      if (rel.targetMarker === "|>" || rel.targetMarker === ">") {
+        canvas.put(endRow, endCol, ">", false, STYLE_ARROW);
+      } else if (rel.targetMarker === "*" || rel.targetMarker === "o") {
+        canvas.put(endRow, endCol, rel.targetMarker, false, STYLE_ARROW);
+      }
     }
   }
+  if (phase === "lines") return;
+
+  const leftCol = Math.min(startCol, endCol);
+  const rightCol = Math.max(startCol, endCol);
+  const midR = runRow ?? Math.floor((startRow + endRow) / 2);
 
   if (rel.label !== "") {
-    const midRow = Math.floor((startRow + endRow) / 2);
-    const midCol = Math.floor((startCol + endCol) / 2);
+    const labelW = displayWidth(rel.label);
     if (startRow === endRow) {
-      canvas.putText(midRow - 1, midCol - Math.floor(displayWidth(rel.label) / 2), rel.label, STYLE_EDGE_LABEL);
+      const midC = Math.floor((startCol + endCol) / 2);
+      canvas.putText(midR - 1, midC - Math.floor(labelW / 2), rel.label, STYLE_EDGE_LABEL, false, true);
+    } else if (startCol === endCol) {
+      canvas.putText(midR, startCol + 2, rel.label, STYLE_EDGE_LABEL, false, true);
+    } else if (useHorizontal) {
+      canvas.putText(midR, Math.floor((startCol + endCol) / 2) + 2, rel.label, STYLE_EDGE_LABEL, false, true);
+    } else if (rightCol - leftCol - 2 >= labelW) {
+      canvas.putText(midR, leftCol + 2, rel.label, STYLE_EDGE_LABEL, false, true);
     } else {
-      canvas.putText(midRow, midCol + 2, rel.label, STYLE_EDGE_LABEL);
+      canvas.putText(midR + 1, endCol + 2, rel.label, STYLE_EDGE_LABEL, false, true);
     }
   }
 
-  if (rel.sourceCard !== "") canvas.putText(startRow, startCol + 1, rel.sourceCard, STYLE_EDGE_LABEL);
-  if (rel.targetCard !== "") canvas.putText(endRow, endCol + 1, rel.targetCard, STYLE_EDGE_LABEL);
-}
-
-/** Where each relationship leaves its source, so two of them out of the same box do not leave by the same column. */
-function computeExitOffsets(diagram: ClassDiagram, layerOf: Map<string, number>): Map<number, number> {
-  const groups = new Map<string, number[]>();
-  diagram.relationships.forEach((rel, index) => {
-    const sameLayer = (layerOf.get(rel.source) ?? -1) === (layerOf.get(rel.target) ?? -2);
-    const key = `${rel.source}${KEY_SEP}${sameLayer ? SIDE_SIDE : SIDE_BOTTOM}`;
-    const group = groups.get(key);
-    if (group === undefined) groups.set(key, [index]);
-    else group.push(index);
-  });
-
-  const offsets = new Map<number, number>();
-  for (const indices of groups.values()) {
-    if (indices.length <= 1) {
-      for (const index of indices) offsets.set(index, 0);
-      continue;
+  if (useHorizontal && startRow === endRow) {
+    if (rel.sourceCard !== "") {
+      const col = startCol < endCol ? startCol + 1 : startCol - displayWidth(rel.sourceCard);
+      canvas.putText(startRow + 1, col, rel.sourceCard, STYLE_EDGE_LABEL, false, true);
     }
-    indices.forEach((index, j) => offsets.set(index, (j - (indices.length - 1) / 2) * EXIT_SPREAD));
+    if (rel.targetCard !== "") {
+      const col = startCol < endCol ? endCol - displayWidth(rel.targetCard) : endCol + 1;
+      canvas.putText(endRow + 1, col, rel.targetCard, STYLE_EDGE_LABEL, false, true);
+    }
+  } else {
+    if (rel.sourceCard !== "") {
+      canvas.putText(startRow, startCol + 1, rel.sourceCard, STYLE_EDGE_LABEL, false, true);
+    }
+    if (rel.targetCard !== "") {
+      canvas.putText(endRow, endCol + 1, rel.targetCard, STYLE_EDGE_LABEL, false, true);
+    }
   }
-  return offsets;
 }
 
-const noteLines = (note: Note): string[] => note.text.split(NOTE_BREAK);
+function noteLines(note: Note): string[] {
+  return note.text.split(NOTE_BREAK);
+}
 
 function noteBoxSize(note: Note): [number, number] {
   const lines = noteLines(note);
-  const widest = lines.length === 0 ? 0 : Math.max(...lines.map(displayWidth));
-  return [Math.max(widest + NOTE_PAD * 2, MIN_BOX_WIDTH), lines.length + 2];
+  const maxLine = lines.length > 0 ? Math.max(...lines.map(displayWidth)) : 0;
+  const width = Math.max(maxLine + 4, MIN_BOX_WIDTH);
+  const height = lines.length + 2;
+  return [width, height];
 }
 
 function drawNoteBox(canvas: Canvas, x: number, y: number, note: Note, cs: CharSet): void {
   const [width, height] = noteBoxSize(note);
-  drawFrame(canvas, x, y, width, height, cs, STYLE_NOTE);
-  noteLines(note).forEach((line, index) => canvas.putText(y + 1 + index, x + NOTE_PAD, line, STYLE_LABEL));
+  const lines = noteLines(note);
+
+  canvas.put(y, x, cs.topLeft, true, STYLE_NOTE);
+  for (let c = x + 1; c < x + width - 1; c++) canvas.put(y, c, cs.horizontal, true, STYLE_NOTE);
+  canvas.put(y, x + width - 1, cs.topRight, true, STYLE_NOTE);
+
+  canvas.put(y + height - 1, x, cs.bottomLeft, true, STYLE_NOTE);
+  for (let c = x + 1; c < x + width - 1; c++) canvas.put(y + height - 1, c, cs.horizontal, true, STYLE_NOTE);
+  canvas.put(y + height - 1, x + width - 1, cs.bottomRight, true, STYLE_NOTE);
+
+  for (let r = y + 1; r < y + height - 1; r++) {
+    canvas.put(r, x, cs.vertical, true, STYLE_NOTE);
+    canvas.put(r, x + width - 1, cs.vertical, true, STYLE_NOTE);
+  }
+
+  lines.forEach((line, li) => {
+    canvas.putText(y + 1 + li, x + 2, line, STYLE_LABEL);
+  });
 }
 
-/** Where every note goes, and where the classes end up once they have been pushed clear of them. */
 function layoutNotes(
   diagram: ClassDiagram,
   positions: Map<string, [number, number]>,
-  sizes: Map<string, [number, number]>,
-  gap: number
+  sizes: ReadonlyMap<string, readonly [number, number]>,
+  gap = SIBLING_GAP
 ): { notes: Array<[number, number]>; positions: Map<string, [number, number]>; width: number; height: number } {
-  const bounds = (placed: Map<string, [number, number]>): [number, number] => {
-    let right = 0;
-    let bottom = 0;
-    for (const [name, [x, y]] of placed) {
-      const [w, h] = sizes.get(name) as [number, number];
-      right = Math.max(right, x + w);
-      bottom = Math.max(bottom, y + h);
-    }
-    return [right, bottom];
-  };
-
   if (diagram.notes.length === 0) {
-    const [right, bottom] = bounds(positions);
-    return { notes: [], positions, width: right + MARGIN, height: bottom + MARGIN };
+    let maxW = 0;
+    let maxH = 0;
+    for (const [name, [x, y]] of positions) {
+      const [w, h] = sizes.get(name) as [number, number];
+      maxW = Math.max(maxW, x + w);
+      maxH = Math.max(maxH, y + h);
+    }
+    return { notes: [], positions, width: maxW + MARGIN, height: maxH + MARGIN };
   }
 
   const targeted: Array<[number, Note]> = [];
   const floating: Array<[number, Note]> = [];
-  diagram.notes.forEach((note, index) => {
-    if (note.target !== "" && positions.has(note.target)) targeted.push([index, note]);
-    else floating.push([index, note]);
+  diagram.notes.forEach((note, i) => {
+    if (note.target !== "" && positions.has(note.target)) targeted.push([i, note]);
+    else floating.push([i, note]);
   });
 
-  // Floating notes sit in a row above everything, and a targeted one beside what it belongs to.
-  const shiftY = floating.length === 0 ? 0 : Math.max(...floating.map(([, note]) => noteBoxSize(note)[1])) + NOTE_ROOM;
-  const shiftX = targeted.length === 0 ? 0 : Math.max(...targeted.map(([, note]) => noteBoxSize(note)[0])) + NOTE_ROOM;
+  const shiftY = floating.length > 0 ? Math.max(...floating.map(([, n]) => noteBoxSize(n)[1])) + 2 : 0;
+  const shiftX = targeted.length > 0 ? Math.max(...targeted.map(([, n]) => noteBoxSize(n)[0])) + 2 : 0;
 
   const adjusted = new Map<string, [number, number]>();
-  for (const [name, [x, y]] of positions) adjusted.set(name, [x + shiftX, y + shiftY]);
-
-  const notes: Array<[number, number]> = diagram.notes.map(() => [-1, -1]);
-  let floatX = MARGIN;
-  for (const [index, note] of floating) {
-    notes[index] = [floatX, MARGIN];
-    floatX += noteBoxSize(note)[0] + gap;
+  for (const [name, [x, y]] of positions) {
+    adjusted.set(name, [x + shiftX, y + shiftY]);
   }
-  for (const [index, note] of targeted) {
+
+  const notePositions: Array<[number, number]> = Array.from({ length: diagram.notes.length }, () => [-1, -1]);
+
+  let floatX = MARGIN;
+  for (const [i, note] of floating) {
+    const [nw] = noteBoxSize(note);
+    notePositions[i] = [floatX, MARGIN];
+    floatX += nw + gap;
+  }
+
+  for (const [i, note] of targeted) {
     const [nw] = noteBoxSize(note);
     const [tx, ty] = adjusted.get(note.target) as [number, number];
-    notes[index] = [Math.max(MARGIN, tx - nw - NOTE_ROOM), ty];
+    const nx = Math.max(MARGIN, tx - nw - 2);
+    notePositions[i] = [nx, ty];
   }
 
-  let [right, bottom] = bounds(adjusted);
-  diagram.notes.forEach((note, index) => {
-    const [nx, ny] = notes[index] as [number, number];
+  let maxW = 0;
+  let maxH = 0;
+  for (const [name, [x, y]] of adjusted) {
+    const [w, h] = sizes.get(name) as [number, number];
+    maxW = Math.max(maxW, x + w);
+    maxH = Math.max(maxH, y + h);
+  }
+  diagram.notes.forEach((note, i) => {
+    const [nx, ny] = notePositions[i] as [number, number];
     const [nw, nh] = noteBoxSize(note);
-    right = Math.max(right, nx + nw);
-    bottom = Math.max(bottom, ny + nh);
+    maxW = Math.max(maxW, nx + nw);
+    maxH = Math.max(maxH, ny + nh);
   });
 
-  return { notes, positions: adjusted, width: right + MARGIN, height: bottom + MARGIN };
+  return { notes: notePositions, positions: adjusted, width: maxW + MARGIN, height: maxH + MARGIN };
 }
 
 export function renderClassDiagram(
   diagram: ClassDiagram,
   useAscii = false,
   paddingX = CLASS_PAD,
-  gap = SIBLING_GAP
+  gap = SIBLING_GAP,
+  cs: CharSet | null = null
 ): Canvas {
-  const cs = useAscii ? ASCII : UNICODE;
+  const charset = cs ?? defaultCharset(useAscii);
   const layout = computeLayout(diagram, paddingX, gap);
   if (layout.width <= 1 && diagram.notes.length === 0) return new Canvas(EMPTY_SIZE, EMPTY_SIZE);
 
   const placed = layoutNotes(diagram, layout.positions, layout.sizes, gap);
-  layout.positions = placed.positions;
-  let width = placed.width;
+  const positions = placed.positions;
+  const width = placed.width;
+  const height = placed.height;
 
-  // A label written beside a vertical line still has to land on the canvas.
-  for (const rel of diagram.relationships) {
-    const source = layout.positions.get(rel.source);
-    const target = layout.positions.get(rel.target);
-    if (rel.label === "" || source === undefined || target === undefined) continue;
-    const [sw] = layout.sizes.get(rel.source) as [number, number];
-    const [tw] = layout.sizes.get(rel.target) as [number, number];
-    const middle = Math.floor((source[0] + Math.floor(sw / 2) + target[0] + Math.floor(tw / 2)) / 2);
-    width = Math.max(width, middle + 2 + displayWidth(rel.label) + MARGIN);
+  const exitOffsets = computeExitOffsets(diagram, layout.layerOf, "source");
+  const entryOffsets = computeExitOffsets(diagram, layout.layerOf, "target");
+  const rowOffsets = computeRowOffsets(diagram, layout.layerOf);
+  const canvas = new Canvas(width, height);
+  const isLr = diagram.direction === LR;
+
+  for (const phase of ["lines", "text"] as const) {
+    diagram.relationships.forEach((rel, i) => {
+      const colOffset = Math.trunc(exitOffsets.get(i) ?? 0);
+      const entryOffset = Math.trunc(entryOffsets.get(i) ?? 0);
+      drawRelationship(
+        canvas,
+        rel,
+        positions,
+        layout.sizes,
+        layout.layerOf,
+        charset,
+        useAscii,
+        colOffset,
+        entryOffset,
+        isLr,
+        rowOffsets.get(i) ?? 0,
+        phase,
+        layout.runRows.get(i) ?? null
+      );
+    });
   }
-
-  const offsets = computeExitOffsets(diagram, layout.layerOf);
-  const canvas = new Canvas(width, placed.height);
-  const isLR = diagram.direction === LR;
-
-  diagram.relationships.forEach((rel, index) => {
-    drawRelationship(canvas, rel, layout, cs, useAscii, Math.trunc(offsets.get(index) ?? 0), isLR);
-  });
 
   for (const [name, cls] of diagram.classes) {
-    const at = layout.positions.get(name);
-    if (at !== undefined) drawClassBox(canvas, at[0], at[1], cls, cs, paddingX);
+    const at = positions.get(name);
+    if (at !== undefined) drawClassBox(canvas, at[0], at[1], cls, charset, paddingX);
   }
 
-  diagram.notes.forEach((note, index) => {
-    const at = placed.notes[index];
-    if (at !== undefined) drawNoteBox(canvas, at[0], at[1], note, cs);
+  diagram.notes.forEach((note, i) => {
+    const at = placed.notes[i];
+    if (at !== undefined) drawNoteBox(canvas, at[0], at[1], note, charset);
   });
 
   return canvas;
