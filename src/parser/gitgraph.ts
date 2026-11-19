@@ -146,7 +146,7 @@ class GitGraphParser {
 
   /** One commit, on the branch checked out, its parent being whatever that branch pointed at. */
   private record(id: string, type: CommitType, tag: string, parents: string[]): void {
-    const commit: Commit = { id, branch: this.currentBranch, type, tag, parents, seq: this.seq };
+    const commit: Commit = { id, branch: this.currentBranch, type, tag, parents, seq: this.seq, label: "" };
     this.seq += 1;
     this.diagram.commits.push(commit);
     this.byId.set(id, commit);

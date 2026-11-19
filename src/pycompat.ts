@@ -25,9 +25,32 @@ export const PY_WORD = `[${PY_WORD_CHARS}]`;
  * difference bites the opposite way: `\x1c` to `\x1f` and `\x85` are whitespace to Python alone, and U+FEFF is
  * whitespace to JavaScript alone. So `trim()` both keeps what `strip()` cuts and cuts what `strip()` keeps.
  */
-const PY_SPACE = "\\t\\n\\v\\f\\r\\x1c-\\x1f \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
+export const PY_SPACE_CHARS =
+  "\\t\\n\\v\\f\\r\\x1c-\\x1f \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
+const PY_SPACE = PY_SPACE_CHARS;
+const PY_SPACE_CHAR_RE = new RegExp(`^[${PY_SPACE}]$`, "u");
+const PY_SPLIT_SPACE_RE = new RegExp(`[${PY_SPACE}]+`, "u");
 const LEADING_SPACE = new RegExp(`^[${PY_SPACE}]+`, "u");
 const TRAILING_SPACE = new RegExp(`[${PY_SPACE}]+$`, "u");
+
+/** Python's `ch.isspace()` on a single code point. */
+export const isPySpace = (ch: string): boolean => ch !== "" && PY_SPACE_CHAR_RE.test(ch);
+
+/** Python's `str.split()` with no separator argument. */
+export function pySplit(text: string): string[] {
+  const trimmedText = pyStrip(text);
+  return trimmedText === "" ? [] : trimmedText.split(PY_SPLIT_SPACE_RE);
+}
+
+const PY_ALPHA_RE = /^\p{Alphabetic}$/u;
+const PY_UPPER_RE = /^\p{Uppercase}$/u;
+const PY_LOWER_RE = /^\p{Lowercase}$/u;
+const PY_DIGIT_RE = /^\p{Nd}$/u;
+
+export const isPyAlpha = (ch: string): boolean => PY_ALPHA_RE.test(ch);
+export const isPyUpper = (ch: string): boolean => PY_UPPER_RE.test(ch);
+export const isPyLower = (ch: string): boolean => PY_LOWER_RE.test(ch);
+export const isPyDigit = (ch: string): boolean => PY_DIGIT_RE.test(ch);
 
 /** Python's `str.lstrip()` and `str.rstrip()` with no argument, which cut whitespace alone. */
 export const lstrip = (text: string): string => text.replace(LEADING_SPACE, "");

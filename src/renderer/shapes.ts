@@ -37,7 +37,12 @@ function drawLabel(
   label: string,
   style = ""
 ): void {
-  const labelStyle = style !== "" ? LABEL_STYLE : "";
+  const labelStyle =
+    style.startsWith("class:") || style.startsWith("nodestyle:")
+      ? `${style}:text`
+      : style !== ""
+        ? LABEL_STYLE
+        : "";
   const lines = label.includes(NEWLINE)
     ? label.split(NEWLINE)
     : label.includes(LITERAL_NEWLINE)
@@ -183,11 +188,11 @@ export const drawCylinder: ShapeRenderer = (canvas, x, y, width, height, label, 
   for (let c = x + 1; c < x + width - 1; c++) canvas.put(y, c, cs.horizontal, true, style);
   canvas.put(y, x + width - 1, cs.roundTopRight, true, style);
 
-  canvas.put(y + 1, x, cs.roundBottomLeft, true, style);
-  for (let c = x + 1; c < x + width - 1; c++) canvas.put(y + 1, c, cs.horizontal, true, style);
-  canvas.put(y + 1, x + width - 1, cs.roundBottomRight, true, style);
+  canvas.put(y + 1, x + 1, cs.lidLeft, true, style);
+  for (let c = x + 2; c < x + width - 2; c++) canvas.put(y + 1, c, cs.lidFill, true, style);
+  canvas.put(y + 1, x + width - 2, cs.lidRight, true, style);
 
-  for (let r = y + 2; r < y + height - 1; r++) {
+  for (let r = y + 1; r < y + height - 1; r++) {
     canvas.put(r, x, cs.vertical, true, style);
     canvas.put(r, x + width - 1, cs.vertical, true, style);
   }

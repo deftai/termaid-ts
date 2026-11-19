@@ -3,7 +3,7 @@
 // The sheet everything is drawn on, indexed row then column. A cell remembers which DIRECTIONS it connects, so two box
 // characters landing on the same cell merge into the junction that carries both instead of one wiping out the other.
 
-import { isWideEastAsian } from "../utils.ts";
+import { displayWidth, isWideEastAsian } from "../utils.ts";
 
 /** The four directions a cell can connect, as bits. */
 export const UP = 1;
@@ -77,6 +77,8 @@ const FLIP_VERTICAL_MAP: ReadonlyMap<string, string> = new Map([
   ["┴", "┬"],
   ["▼", "▲"],
   ["▲", "▼"],
+  ["▽", "△"],
+  ["△", "▽"],
   ["╭", "╰"],
   ["╮", "╯"],
   ["╰", "╭"],
@@ -100,6 +102,10 @@ const FLIP_HORIZONTAL_MAP: ReadonlyMap<string, string> = new Map([
   ["┴", "┴"],
   ["►", "◄"],
   ["◄", "►"],
+  ["▶", "◀"],
+  ["◀", "▶"],
+  ["▷", "◁"],
+  ["◁", "▷"],
   ["╭", "╮"],
   ["╮", "╭"],
   ["╰", "╯"],
@@ -138,8 +144,8 @@ export class Canvas {
     if (newWidth <= this.width && newHeight <= this.height) return;
     const width = Math.max(this.width, newWidth);
     const height = Math.max(this.height, newHeight);
+    const extra = width - this.width;
     for (let r = 0; r < this.height; r++) {
-      const extra = width - this.width;
       for (let i = 0; i < extra; i++) {
         (this.grid[r] as string[]).push(BLANK);
         (this.styles[r] as string[]).push(DEFAULT_STYLE);
@@ -211,13 +217,41 @@ export class Canvas {
     if (style !== "") (this.styles[row] as string[])[col] = style;
   }
 
-  /** A string from one cell rightwards, a wide character taking two columns and blanking the second. */
-  putText(row: number, col: number, text: string, style = ""): void {
+  /**
+   * Place a string of characters starting at `(row, col)`.
+   * Wide (CJK) characters advance the column by 2 and blank the shadow cell.
+   * Text past the right edge is clipped unless `grow` is set.
+   */
+  putText(
+    row: number,
+    col: number,
+    text: string,
+    style = "",
+    overwriteSpaces = false,
+    grow = false
+  ): void {
+    if (grow) {
+      this.resize(col + displayWidth(text), this.height);
+    }
     let offset = 0;
     for (const ch of text) {
-      this.put(row, col + offset, ch, false, style);
+      const targetCol = col + offset;
+      if (
+        ch === BLANK &&
+        overwriteSpaces &&
+        this.inside(row, targetCol) &&
+        !this.isProtected(row, targetCol)
+      ) {
+        (this.grid[row] as string[])[targetCol] = BLANK;
+        (this.directions[row] as number[])[targetCol] = 0;
+        (this.styles[row] as string[])[targetCol] = style || DEFAULT_STYLE;
+      } else if (ch === BLANK) {
+        this.styleBlank(row, targetCol, style);
+      } else {
+        this.put(row, targetCol, ch, false, style);
+      }
       if (isWideEastAsian(ch)) {
-        this.blankShadowCell(row, col + offset + 1, style);
+        this.blankShadowCell(row, targetCol + 1, style);
         offset += 2;
       } else {
         offset += 1;
@@ -241,6 +275,22 @@ export class Canvas {
     }
   }
 
+  /** Give a blank cell inside a text run the run's style, so a label reads as one styled span. */
+  private styleBlank(row: number, col: number, style: string): void {
+    if (style !== "" && this.inside(row, col) && (this.grid[row] as string[])[col] === BLANK) {
+      (this.styles[row] as string[])[col] = style;
+    }
+  }
+
+  /** Reset a cell to an unstyled space. */
+  blank(row: number, col: number): void {
+    if (this.inside(row, col)) {
+      (this.grid[row] as string[])[col] = BLANK;
+      (this.directions[row] as number[])[col] = 0;
+      (this.styles[row] as string[])[col] = DEFAULT_STYLE;
+    }
+  }
+
   private blankShadowCell(row: number, col: number, style: string): void {
     if (row >= 0 && row < this.height && col >= 1 && col < this.width) {
       (this.grid[row] as string[])[col] = SHADOW;
@@ -258,7 +308,7 @@ export class Canvas {
 
   /**
    * A cell's style with no character of its own, which is how a chart paints a BACKGROUND: `put` refuses a space, so a
-   * renderer wanting a coloured blank writes the style alone. The reference does it by reaching into the style grid.
+   * renderer wanting a coloured blank writes the style alone.
    */
   setStyle(row: number, col: number, style: string): void {
     if (this.inside(row, col)) (this.styles[row] as string[])[col] = style;

@@ -58,6 +58,12 @@ function cssToRichStyle(props: CssProps): string | null {
   return parts.length > 0 ? parts.join(STYLE_SEPARATOR) : null;
 }
 
+/** Rich style for a node's label text: Mermaid's `color` property. */
+function cssToRichTextStyle(props: CssProps): string | null {
+  const color = props.get("color");
+  return color ? hexToRichColor(color) : null;
+}
+
 /** The style keys the canvas writes, kept here because more than the theme table must agree on their spelling. */
 const NODE = "node";
 const EDGE = "edge";
@@ -96,13 +102,12 @@ function trimmedLines(rows: ReadonlyArray<ReadonlyArray<readonly [string, string
   return lines;
 }
 
-/** A graph painted by a theme, as the Rich text the reference prints. */
-export function renderRich(
+/** Colour a rendered graph canvas, applying the graph's own `classDef`, `style` and `linkStyle` colours. */
+export function renderGraphRich(
+  canvas: Canvas | null,
   graph: Graph,
-  options: Partial<RenderOptions> = {},
   theme: string = DEFAULT
 ): Text {
-  const canvas = renderGraphCanvas(graph, options);
   if (canvas === null) return new Text(EMPTY);
 
   const th = getTheme(theme);
@@ -123,11 +128,13 @@ export function renderRich(
   for (const [className, props] of graph.classDefs) {
     const style = cssToRichStyle(props);
     if (style) styleMap.set(CLASS_PREFIX + className, style);
+    styleMap.set(`${CLASS_PREFIX}${className}:text`, cssToRichTextStyle(props) ?? th.label);
   }
 
   for (const [nodeId, props] of graph.nodeStyles) {
     const style = cssToRichStyle(props);
     if (style) styleMap.set(NODE_STYLE_PREFIX + nodeId, style);
+    styleMap.set(`${NODE_STYLE_PREFIX}${nodeId}:text`, cssToRichTextStyle(props) ?? th.label);
   }
 
   const defaultLinkProps = graph.linkStyles.get(DEFAULT_LINK);
@@ -201,6 +208,15 @@ export function renderRich(
   return text;
 }
 
+/** Backwards-compatible helper rendering and painting a graph in one call. */
+export function renderRich(
+  graph: Graph,
+  options: Partial<RenderOptions> = {},
+  theme: string = DEFAULT
+): Text {
+  return renderGraphRich(renderGraphCanvas(graph, options), graph, theme);
+}
+
 /** How much lighter a card sits than the column it is laid on. */
 const CARD_LIFT = 30;
 const CHANNEL_MAX = 255;
@@ -221,7 +237,8 @@ const gain = (rgb: RGB, by: number): RGB => ({
 });
 
 /** A canvas a specialised renderer already drew, painted by a theme. */
-export function renderSequenceRich(canvas: Canvas, theme: string = DEFAULT): Text {
+export function renderSequenceRich(canvas: Canvas | null, theme: string = DEFAULT): Text {
+  if (canvas === null) return new Text(EMPTY);
   const th: Theme = getTheme(theme);
   const sectionColors = th.sectionColors;
 

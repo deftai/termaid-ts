@@ -14,6 +14,7 @@ export interface Commit {
   parents: string[];
   /** Where the commit falls in the order it was written. */
   seq: number;
+  label: string;
 }
 
 export interface Branch {

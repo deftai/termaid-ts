@@ -197,4 +197,18 @@ export class Graph {
     };
     return search(this.subgraphs);
   }
+
+  /**
+   * Keep each node only in the subgraph that owns it.
+   * A node mentioned inside two subgraphs belongs to the one that closes first, as in Mermaid.
+   */
+  dropSharedSubgraphMembers(): void {
+    const walk = (subs: Subgraph[]): void => {
+      for (const sg of subs) {
+        walk(sg.children);
+        sg.nodeIds = sg.nodeIds.filter((nid) => this.findSubgraphForNode(nid) === sg);
+      }
+    };
+    walk(this.subgraphs);
+  }
 }
