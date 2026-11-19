@@ -232,6 +232,7 @@ const AUTO_FIT_WARNING = /^Warning: diagram is \d+ cols wide but target is \d+\.
  * CPython's own diagnostic, and forging a `re.error` text is copying the standard library, not porting termaid.
  */
 const REFUSAL = /^Error rendering diagram: /m;
+const EMPTY_RENDER = /^Error: Input produced no renderable diagram\./m;
 let refused = 0;
 let checked = 0;
 
@@ -263,7 +264,10 @@ async function check(entry: Case, profile: Profile): Promise<void> {
   const label = `${entry.name} [${profile.label}]`;
   const { stdout, stderr } = await referenceOutput(entry.source, profile);
   const refusal = stdout === EMPTY && REFUSAL.test(stderr);
-  if (stderr !== EMPTY && !AUTO_FIT_WARNING.test(stderr) && !refusal) noisy.push(`${label}: ${stderr.trim()}`);
+  const emptyRender = stdout === EMPTY && EMPTY_RENDER.test(stderr);
+  if (stderr !== EMPTY && !AUTO_FIT_WARNING.test(stderr) && !refusal && !emptyRender) {
+    noisy.push(`${label}: ${stderr.trim()}`);
+  }
 
   let got: string;
   let threw = false;
@@ -279,6 +283,12 @@ async function check(entry: Case, profile: Profile): Promise<void> {
   if (refusal) {
     if (threw) refused++;
     else divergences.push({ label, source: entry.source, expected: `<refus>\n${stderr}`, got });
+    return;
+  }
+
+  if (emptyRender) {
+    if (!threw && got.trim() === EMPTY) return;
+    divergences.push({ label, source: entry.source, expected: `<render_empty>\n${stderr}`, got });
     return;
   }
 
@@ -323,6 +333,15 @@ const FLAG_CASES: ReadonlyArray<CliCase> = [
   { label: "json-unparsable", argv: ["--json", "pie", "--width", "60"], input: "@@@" },
   { label: "too-wide", argv: ["--width", "10"], input: "graph LR\n  A[a long label] --> B[another one]\n" },
   { label: "themed", argv: ["--width", "80", "--theme", "neon"], input: "graph LR\n  A --> B\n" },
+  { label: "arrow-styles", argv: ["--arrow-styles"], input: EMPTY },
+  { label: "arrow-triangle", argv: ["--arrow-style", "triangle", "--width", "80"], input: "graph LR\n  A --> B\n" },
+  { label: "inline-edge-labels", argv: ["--inline-edge-labels", "--width", "80"], input: "graph TD\n  A -->|yes| B\n" },
+  { label: "format-styled-json", argv: ["--format", "styled-json", "--width", "80"], input: "graph LR\n  A --> B\n" },
+  { label: "diag-json-empty", argv: ["--diagnostics-format", "json"], input: "   \n" },
+  { label: "empty-render", argv: ["--width", "80"], input: "graph LR\n" },
+  { label: "strict-width", argv: ["--width", "5", "--strict-width"], input: "graph LR\n  A[long] --> B[long]\n" },
+  { label: "max-height", argv: ["--max-height", "2"], input: "graph TD\n  A --> B\n" },
+  { label: "markdown", argv: ["--markdown", "--width", "80"], input: "# Title\n\n```mermaid\ngraph LR\n  A --> B\n```\n\nDone.\n" },
 ];
 
 // Whether a theme actually PAINTS is the console's decision and never the flag's, so the same command line answers

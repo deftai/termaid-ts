@@ -444,7 +444,7 @@ const THEME_LIST: ReadonlyArray<readonly [string, string, string]> = [
   ["phosphor", "text", "Green phosphor terminal"],
   ["gruvbox", "solid", "Gruvbox dark palette"],
   ["monokai", "solid", "Monokai dark with pink/green accents"],
-  ["dracula", "solid", "Dracula purple/pink/green accents"],
+  ["dracula", "solid", "Dracula purple/pink/green palette"],
   ["nord", "solid", "Nord muted blue/cyan arctic palette"],
   ["solarized", "solid", "Solarized dark blue/yellow/cyan"],
 ];

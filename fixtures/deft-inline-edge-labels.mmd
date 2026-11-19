@@ -1,0 +1,5 @@
+flowchart TD
+  Gate{Authorize?} -->|allow| Read[Read state]
+  Gate -->|deny| Reject[Return 403]
+  Read -->|hit| Fast[Serve cached]
+  Read -->|miss| Slow[Query store]

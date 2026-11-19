@@ -1,0 +1,7 @@
+flowchart TD
+  Init[Init] --> Fetch[Fetch batch]
+  Fetch --> Validate{Valid?}
+  Validate -->|yes| Commit[Commit]
+  Validate -->|no| Fetch
+  Commit -->|more| Fetch
+  Commit -->|done| End[Done]

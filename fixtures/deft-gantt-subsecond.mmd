@@ -1,0 +1,8 @@
+gantt
+  title Trace spans
+  dateFormat x
+  axisFormat %S.%L
+  section Request
+    parse   :done, s1, 1704067200000, 125ms
+    query   :active, s2, after s1, 350ms
+    render  :crit, s3, after s2, 80ms

@@ -1,41 +1,40 @@
 // The ORACLE: what the reference DRAWS, frozen on disk so the port is judged against bytes and never against a reading
-// of the Python source. Run it once per reference version; the fixtures it writes are versioned with the port.
-//
-// Two takes per source and width: PLAIN, which is the layout alone and the only thing the first half of the port owes,
-// and NEON, which is the layout plus the colours a theme paints on it.
-//
-// A fixture must draw the same thing on any day, so a gantt one spans PAST dates alone: today's marker then never
-// falls inside the chart, and the frozen take cannot rot.
+// of the Python source. Run it once per reference version (or with `--missing-only` for newly added fixtures).
 
 import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { REFERENCE_COMMAND, referenceArgs } from "./reference.ts";
+import { partialCuts } from "./partial-cuts.ts";
+import { REFERENCE_COMMAND, referenceArgs, referencePythonArgs } from "./reference.ts";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const FIXTURES = path.join(ROOT, "fixtures");
 const EXPECTED = path.join(FIXTURES, "expected");
+const STYLED_ORACLE_SCRIPT = path.join(ROOT, "scripts", "styled_oracle.py");
 const SOURCE_EXT = ".mmd";
 const DRAWN_EXT = ".txt";
 
-/** The widths a terminal actually is, near enough: one that forces the layout to compact and one that does not. */
 export const WIDTHS = [40, 80];
 const WIDTH_FLAG = "--width";
 const THEME_FLAG = "--theme";
-/** The theme cc-views renders with, so parity is judged on the drawing its users see. */
 const THEME = "neon";
-/** What turns the colour on: the renderer writes to a pipe here, and Rich silences colour when TERM=dumb. */
 const COLOUR_ENV = { FORCE_COLOR: "1", TERM: "xterm-256color" };
 const VERSION_FLAG = "--version";
-/** The reference's own name for what it drew, kept beside the fixtures: a bump invalidates every byte below. */
 const STAMP = "reference.txt";
 const CONCURRENCY = Math.max(2, os.cpus().length - 2);
 
-/** Where a take lands. The name says everything it depends on, so a stale file is a visible one. */
 export function expectedPath(name: string, width: number, theme: string | null): string {
   return path.join(EXPECTED, `${name}@${width}${theme === null ? "" : `.${theme}`}${DRAWN_EXT}`);
+}
+
+export function expectedStyledPath(name: string, useAscii: boolean): string {
+  return path.join(EXPECTED, `${name}${useAscii ? ".ascii" : ""}.styled.json`);
+}
+
+export function expectedPartialPath(name: string): string {
+  return path.join(EXPECTED, `${name}.partial.json`);
 }
 
 export function sources(): string[] {
@@ -81,6 +80,8 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.reso
   const missingOnly = process.argv.includes("--missing-only");
   fs.mkdirSync(EXPECTED, { recursive: true });
   const tasks: Array<() => Promise<void>> = [];
+  const styledBatch: Array<{ name: string; source: string; cuts: string[] }> = [];
+
   for (const name of sources()) {
     const source = fs.readFileSync(sourcePath(name), "utf8");
     for (const width of WIDTHS) {
@@ -92,6 +93,13 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.reso
           fs.writeFileSync(outPath, out);
         });
       }
+    }
+
+    const uPath = expectedStyledPath(name, false);
+    const aPath = expectedStyledPath(name, true);
+    const pPath = expectedPartialPath(name);
+    if (!missingOnly || !fs.existsSync(uPath) || !fs.existsSync(aPath) || !fs.existsSync(pPath)) {
+      styledBatch.push({ name, source, cuts: partialCuts(source) });
     }
   }
 
@@ -105,7 +113,36 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.reso
     })
   );
 
+  let styledWritten = 0;
+  if (styledBatch.length > 0) {
+    const raw = execFileSync(REFERENCE_COMMAND, referencePythonArgs([STYLED_ORACLE_SCRIPT]), {
+      input: JSON.stringify(styledBatch),
+      encoding: "utf8",
+      maxBuffer: Number.MAX_SAFE_INTEGER,
+    });
+    const parsed = JSON.parse(raw) as Record<string, { unicode: string; ascii: string; partial: string }>;
+    for (const { name } of styledBatch) {
+      const item = parsed[name];
+      if (item === undefined) throw new Error(`styled_oracle missing output for ${name}`);
+      const uPath = expectedStyledPath(name, false);
+      const aPath = expectedStyledPath(name, true);
+      const pPath = expectedPartialPath(name);
+      if (!missingOnly || !fs.existsSync(uPath)) {
+        fs.writeFileSync(uPath, item.unicode + "\n");
+        styledWritten++;
+      }
+      if (!missingOnly || !fs.existsSync(aPath)) {
+        fs.writeFileSync(aPath, item.ascii + "\n");
+        styledWritten++;
+      }
+      if (!missingOnly || !fs.existsSync(pPath)) {
+        fs.writeFileSync(pPath, item.partial + "\n");
+        styledWritten++;
+      }
+    }
+  }
+
   const stamp = execFileSync(REFERENCE_COMMAND, referenceArgs([VERSION_FLAG]), { encoding: "utf8" });
   fs.writeFileSync(path.join(EXPECTED, STAMP), stamp);
-  console.log(`oracle: ${tasks.length} takes from ${stamp.trim()}`);
+  console.log(`oracle: ${tasks.length} CLI takes + ${styledWritten} styled/partial takes from ${stamp.trim()}`);
 }

@@ -1,0 +1,14 @@
+classDiagram
+  class Transport {
+    <<interface>>
+    +send(bytes)
+  }
+  class HttpTransport {
+    +send(bytes)
+  }
+  class RetryPolicy {
+    +delays()
+  }
+  Transport <|.. HttpTransport : implements
+  HttpTransport ..> RetryPolicy : consults
+  HttpTransport --> Logger : logs

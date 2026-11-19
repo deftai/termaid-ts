@@ -38,3 +38,11 @@ export const REFERENCE_ARGV: readonly string[] = [
 
 /** The whole argv of one call: the runner's prefix, then what the reference itself is being asked. */
 export const referenceArgs = (args: readonly string[]): string[] => [...REFERENCE_ARGV, ...args];
+
+/** Run a Python helper script inside the exact same pinned reference environment (`uvx --from <spec> python ...`). */
+export const referencePythonArgs = (args: readonly string[]): string[] => [
+  FROM_FLAG,
+  REFERENCE_SPEC,
+  "python",
+  ...args,
+];

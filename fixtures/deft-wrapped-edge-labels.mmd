@@ -1,0 +1,3 @@
+flowchart LR
+  Start[Receive incoming webhook payload] -->|validate cryptographic signature before queueing| Worker[Process background job]
+  Worker -->|publish completion notification event| Done[Acknowledge]

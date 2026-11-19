@@ -1,0 +1,10 @@
+          validate
+┌────────┐cryptographic ┌──────────┐             ┌───────────┐
+│        │signature     │          │             │           │
+│Receive │before        │ Process  │             │           │
+│incoming│queueing      │background│             │Acknowledge│
+│webhook ├─────────────►│   job    ├────────────►│           │
+│payload │              │          │publish      │           │
+│        │              │          │completion   │           │
+└────────┘              └──────────┘notification └───────────┘
+                                    event

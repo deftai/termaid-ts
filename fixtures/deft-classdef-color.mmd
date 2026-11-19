@@ -1,0 +1,7 @@
+flowchart LR
+  classDef warn fill:#332200,stroke:#ffaa00,color:#ffee88
+  classDef ok stroke:#22aa55,color:#88ffaa
+  A[Normal] --> B[Warning]:::warn
+  B --> C[Healthy]:::ok
+  C --> D[Inline]
+  style D fill:#112233,stroke:#4488cc,color:#cceeff
