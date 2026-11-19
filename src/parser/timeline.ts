@@ -1,7 +1,7 @@
 // Ported from src/termaid/parser/timeline.py.
 
-import { makeTimeline, makeTimelineEvent, makeTimelineSection, type Timeline, type TimelineSection } from "../model/timeline.js";
-import { pyStrip, splitLines } from "../pycompat.js";
+import { makeTimeline, makeTimelineEvent, makeTimelineSection, type Timeline, type TimelineSection } from "../model/timeline.ts";
+import { pyStrip, splitLines } from "../pycompat.ts";
 
 const COMMENT = "%%";
 const TITLE = "title ";

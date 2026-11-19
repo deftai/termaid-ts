@@ -3,9 +3,9 @@
 // The room a subgraph's border and label take between two layers, and the box each subgraph ends up occupying once
 // its nodes are placed.
 
-import { Direction, type Graph, type Subgraph } from "../graph/model.js";
-import { displayWidth } from "../utils.js";
-import { SG_BORDER_PAD, SG_GAP_PER_LEVEL, SG_LABEL_HEIGHT, type GridLayout, type SubgraphBounds } from "./grid.js";
+import { Direction, type Graph, type Subgraph } from "../graph/model.ts";
+import { displayWidth } from "../utils.ts";
+import { SG_BORDER_PAD, SG_GAP_PER_LEVEL, SG_LABEL_HEIGHT, type GridLayout, type SubgraphBounds } from "./grid.ts";
 
 /** What a cross-direction gap holds where two sibling subgraphs meet: two borders and the space between them. */
 const SIBLING_GAP = 8;

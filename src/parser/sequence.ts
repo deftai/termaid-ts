@@ -12,8 +12,8 @@ import {
   type BlockSection,
   type Event,
   type SequenceDiagram,
-} from "../model/sequence.js";
-import { pyRepr, pyStrip } from "../pycompat.js";
+} from "../model/sequence.ts";
+import { pyRepr, pyStrip } from "../pycompat.ts";
 
 /** Every arrow, LONGEST first, so `-->>` is never read as `-->` followed by a stray `>`. */
 const ARROW_PATTERNS: ReadonlyArray<readonly [string, string, string]> = [

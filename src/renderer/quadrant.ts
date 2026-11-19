@@ -3,9 +3,9 @@
 // A 2x2 grid, its four corners named and its points plotted where their coordinates fall. The chart is built in a plain
 // character grid first and copied onto the canvas at the end, blanks included, so each quadrant carries its own colour.
 
-import type { QuadrantChart } from "../model/quadrant.js";
-import { displayWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
+import type { QuadrantChart } from "../model/quadrant.ts";
+import { displayWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
 
 const CHART_W = 60;
 const CHART_H = 20;

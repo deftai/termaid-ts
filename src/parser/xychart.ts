@@ -1,7 +1,7 @@
 // Ported from src/termaid/parser/xychart.py.
 
-import { makeXYChart, makeXYDataset, type XYChart } from "../model/xychart.js";
-import { pyFloat, pyStrip, splitLines } from "../pycompat.js";
+import { makeXYChart, makeXYDataset, type XYChart } from "../model/xychart.ts";
+import { pyFloat, pyStrip, splitLines } from "../pycompat.ts";
 
 const COMMENT = "%%";
 const HORIZONTAL = "horizontal";

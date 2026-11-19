@@ -9,8 +9,8 @@ import {
   type Attribute,
   type ERDiagram,
   type Relationship,
-} from "../model/erdiagram.js";
-import { PY_WORD, pyRepr, pyStrip, stripChars } from "../pycompat.js";
+} from "../model/erdiagram.ts";
+import { PY_WORD, pyRepr, pyStrip, stripChars } from "../pycompat.ts";
 
 const W = PY_WORD;
 const FRONTMATTER_RE = /^---\s*\n[\s\S]*?\n---\s*\n/;

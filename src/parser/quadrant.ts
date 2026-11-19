@@ -1,7 +1,7 @@
 // Ported from src/termaid/parser/quadrant.py.
 
-import { makeQuadrantChart, type QuadrantChart } from "../model/quadrant.js";
-import { pyStrip, splitLines } from "../pycompat.js";
+import { makeQuadrantChart, type QuadrantChart } from "../model/quadrant.ts";
+import { pyStrip, splitLines } from "../pycompat.ts";
 
 const COMMENT = "%%";
 const TITLE = "title ";

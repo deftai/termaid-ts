@@ -2,8 +2,8 @@
 //
 // The tree is written by INDENTATION: a line deeper than the one above it is its child.
 
-import { makeTreemap, makeTreemapNode, type Treemap, type TreemapNode } from "../model/treemap.js";
-import { pyStrip, splitLines } from "../pycompat.js";
+import { makeTreemap, makeTreemapNode, type Treemap, type TreemapNode } from "../model/treemap.ts";
+import { pyStrip, splitLines } from "../pycompat.ts";
 
 const COMMENT = "%%";
 const NODE_RE = /^(\s*)"([^"]+)"(?:\s*:\s*([0-9]+(?:\.[0-9]*)?))?/;

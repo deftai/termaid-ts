@@ -7,9 +7,9 @@ import {
   type Gantt,
   type GanttSection,
   type GanttTask,
-} from "../model/gantt.js";
-import { PY_WORD, pyInt, pyStrip, splitLines } from "../pycompat.js";
-import { fromYMD, strptime, type CivilDate } from "../pydate.js";
+} from "../model/gantt.ts";
+import { PY_WORD, pyInt, pyStrip, splitLines } from "../pycompat.ts";
+import { fromYMD, strptime, type CivilDate } from "../pydate.ts";
 
 const COMMENT = "%%";
 const TITLE = "title ";

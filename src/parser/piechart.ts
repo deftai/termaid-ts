@@ -1,7 +1,7 @@
 // Ported from src/termaid/parser/piechart.py.
 
-import { makePieChart, type PieChart } from "../model/piechart.js";
-import { pyStrip, splitLines } from "../pycompat.js";
+import { makePieChart, type PieChart } from "../model/piechart.ts";
+import { pyStrip, splitLines } from "../pycompat.ts";
 
 const SHOW_DATA = "showData";
 const COMMENT = "%%";

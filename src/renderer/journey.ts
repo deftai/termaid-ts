@@ -3,10 +3,10 @@
 // One line of tasks running left to right, grouped under section bars, each task carrying the actors who took part and
 // a face for how it went.
 
-import { DEFAULT_SCORE, type Journey } from "../model/journey.js";
-import { pySorted } from "../pycompat.js";
-import { displayWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
+import { DEFAULT_SCORE, type Journey } from "../model/journey.ts";
+import { pySorted } from "../pycompat.ts";
+import { displayWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
 
 /** How a score reads: a face per level, and three characters where the terminal has no emoji. */
 const FACE: Record<number, string> = { 1: "😞", 2: "😟", 3: "😐", 4: "😊", 5: "😄" };

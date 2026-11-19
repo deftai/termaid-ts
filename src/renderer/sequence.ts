@@ -13,11 +13,11 @@ import type {
   Note,
   Participant,
   SequenceDiagram,
-} from "../model/sequence.js";
-import { displayWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
-import { ASCII, UNICODE, type CharSet } from "./charset.js";
-import { drawCylinder, drawRectangle } from "./shapes.js";
+} from "../model/sequence.ts";
+import { displayWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
+import { ASCII, UNICODE, type CharSet } from "./charset.ts";
+import { drawCylinder, drawRectangle } from "./shapes.ts";
 
 const BOX_PAD = 4;
 const BOX_HEIGHT = 3;

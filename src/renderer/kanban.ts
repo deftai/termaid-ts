@@ -3,9 +3,9 @@
 // Columns side by side, cards stacked inside each one. Every column is drawn to the FULL height of the board, so the
 // frames line up whatever each one holds.
 
-import type { Kanban, KanbanColumn } from "../model/kanban.js";
-import { displayWidth, truncateToWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
+import type { Kanban, KanbanColumn } from "../model/kanban.ts";
+import { displayWidth, truncateToWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
 
 /** Inset of a card from its column's edges. */
 const COL_PAD = 2;

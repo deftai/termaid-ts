@@ -3,7 +3,7 @@
 // What a parsed diagram IS, before anything is placed or drawn: nodes by id in the order they were written, edges in
 // the order they were read, and the subgraph tree. The layout below reads nothing else.
 
-import { NodeShape } from "./shapes.js";
+import { NodeShape } from "./shapes.ts";
 
 /** A note attached to a node, `position` being "rightof" or "leftof". */
 export interface GraphNote {
@@ -20,28 +20,31 @@ export interface LabelSegment {
 }
 
 /** What an edge ends with. */
-export enum ArrowType {
-  ARROW = "ARROW", // -->
-  CIRCLE = "CIRCLE", // --o
-  CROSS = "CROSS", // --x
-}
+export const ArrowType = {
+  ARROW: "ARROW", // -->
+  CIRCLE: "CIRCLE", // --o
+  CROSS: "CROSS", // --x
+} as const;
+export type ArrowType = (typeof ArrowType)[keyof typeof ArrowType];
 
 /** What an edge is drawn with. */
-export enum EdgeStyle {
-  SOLID = "SOLID", // -->
-  DOTTED = "DOTTED", // -.->
-  THICK = "THICK", // ==>
-  INVISIBLE = "INVISIBLE", // ~~~
-}
+export const EdgeStyle = {
+  SOLID: "SOLID", // -->
+  DOTTED: "DOTTED", // -.->
+  THICK: "THICK", // ==>
+  INVISIBLE: "INVISIBLE", // ~~~
+} as const;
+export type EdgeStyle = (typeof EdgeStyle)[keyof typeof EdgeStyle];
 
 /** The direction a graph runs, spelled the way its header spells it. */
-export enum Direction {
-  TB = "TB",
-  TD = "TD",
-  LR = "LR",
-  BT = "BT",
-  RL = "RL",
-}
+export const Direction = {
+  TB: "TB",
+  TD: "TD",
+  LR: "LR",
+  BT: "BT",
+  RL: "RL",
+} as const;
+export type Direction = (typeof Direction)[keyof typeof Direction];
 
 export const isVertical = (d: Direction): boolean =>
   d === Direction.TB || d === Direction.TD || d === Direction.BT;

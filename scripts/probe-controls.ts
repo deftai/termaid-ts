@@ -8,8 +8,8 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { printToConsole, render, renderThemedText, type Options } from "../src/index.js";
-import { REFERENCE_COMMAND, referenceArgs } from "./reference.js";
+import { printToConsole, render, renderThemedText, type Options } from "../src/index.ts";
+import { REFERENCE_COMMAND, referenceArgs } from "./reference.ts";
 
 const REPORT_DIR = path.join(os.tmpdir(), "termaid-probe2");
 const CONCURRENCY = Math.max(2, os.cpus().length - 2);

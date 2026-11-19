@@ -12,7 +12,7 @@
 // Pure arithmetic on purpose, holding no Rich vocabulary: `richcompat.ts` owns what a colour IS, and calls in here
 // for what it BECOMES.
 
-import type { RGB } from "./richcompat.js";
+import type { RGB } from "./richcompat.ts";
 
 /** The two sides a terminal can be. `dark` is what every theme was drawn for, so it mirrors nothing. */
 export const DARK_BACKGROUND = "dark";

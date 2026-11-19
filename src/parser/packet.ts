@@ -1,7 +1,7 @@
 // Ported from src/termaid/parser/packet.py.
 
-import { makePacket, type Packet } from "../model/packet.js";
-import { pyStrip, splitLines } from "../pycompat.js";
+import { makePacket, type Packet } from "../model/packet.ts";
+import { pyStrip, splitLines } from "../pycompat.ts";
 
 const COMMENT = "%%";
 /** `start-end: "label"`, the two bounds written out. */

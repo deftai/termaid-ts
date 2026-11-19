@@ -3,12 +3,12 @@
 // The grid is explicit here, unlike a flowchart's: a block takes the cells its span asks for and wraps to the next row
 // when the row it is on has no room left. Groups are drawn first, then the links, then the blocks over both.
 
-import { NodeShape } from "../graph/shapes.js";
-import type { Block, BlockDiagram, BlockLink } from "../model/blockdiagram.js";
-import { displayWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
-import { ASCII, UNICODE, type CharSet } from "./charset.js";
-import { SHAPE_RENDERERS } from "./shapes.js";
+import { NodeShape } from "../graph/shapes.ts";
+import type { Block, BlockDiagram, BlockLink } from "../model/blockdiagram.ts";
+import { displayWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
+import { ASCII, UNICODE, type CharSet } from "./charset.ts";
+import { SHAPE_RENDERERS } from "./shapes.ts";
 
 const BLOCK_PAD = 2;
 const MIN_BLOCK_W = 12;

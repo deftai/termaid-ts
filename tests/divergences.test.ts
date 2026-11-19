@@ -9,8 +9,8 @@
 // What each pins is the PROPERTY, never the drawing: the bytes belong to the layout and would rot on the next change.
 
 import { describe, it, expect } from "bun:test";
-import { declaredType, render } from "../src/index.js";
-import { parsePieChart } from "../src/parser/piechart.js";
+import { declaredType, render } from "../src/index.ts";
+import { parsePieChart } from "../src/parser/piechart.ts";
 
 const BOM = "﻿";
 

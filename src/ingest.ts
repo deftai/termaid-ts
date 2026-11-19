@@ -7,7 +7,7 @@
 // Python tells an int from a float and writes them differently, `30` against `30.0`, so the JSON read here keeps the
 // distinction its literals carry: `JSON.parse` alone would flatten both onto one number and print the wrong one.
 
-import { pyFloat, pyFloatStr, pyRepr, pyStrip, splitLines } from "./pycompat.js";
+import { pyFloat, pyFloatStr, pyRepr, pyStrip, splitLines } from "./pycompat.ts";
 
 /** A number as Python holds one: its value, and the text `str()` writes for it. */
 interface PyNumber {

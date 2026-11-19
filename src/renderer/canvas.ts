@@ -3,7 +3,7 @@
 // The sheet everything is drawn on, indexed row then column. A cell remembers which DIRECTIONS it connects, so two box
 // characters landing on the same cell merge into the junction that carries both instead of one wiping out the other.
 
-import { isWideEastAsian } from "../utils.js";
+import { isWideEastAsian } from "../utils.ts";
 
 /** The four directions a cell can connect, as bits. */
 export const UP = 1;
@@ -115,15 +115,16 @@ const FLIP_HORIZONTAL_MAP: ReadonlyMap<string, string> = new Map([
 export type StyledCell = readonly [string, string];
 
 export class Canvas {
+  public width: number;
+  public height: number;
   private grid: string[][];
   private styles: string[][];
   private protectedCells: boolean[][];
   private directions: number[][];
 
-  constructor(
-    public width: number,
-    public height: number
-  ) {
+  constructor(width: number, height: number) {
+    this.width = width;
+    this.height = height;
     const rows = <T,>(value: T): T[][] =>
       Array.from({ length: height }, () => Array.from({ length: width }, () => value));
     this.grid = rows(BLANK);

@@ -10,8 +10,8 @@ import {
   SOLID,
   type ClassDiagram,
   type Member,
-} from "../model/classdiagram.js";
-import { PY_WORD, pyRepr, pyStrip, stripChars } from "../pycompat.js";
+} from "../model/classdiagram.ts";
+import { PY_WORD, pyRepr, pyStrip, stripChars } from "../pycompat.ts";
 
 const W = PY_WORD;
 const FRONTMATTER_RE = /^---\s*\n[\s\S]*?\n---\s*\n/;

@@ -20,8 +20,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { printToConsole, render, renderThemedText, type Options } from "../src/index.js";
-import { REFERENCE_COMMAND, referenceArgs } from "./reference.js";
+import { printToConsole, render, renderThemedText, type Options } from "../src/index.ts";
+import { REFERENCE_COMMAND, referenceArgs } from "./reference.ts";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const FIXTURES = path.join(ROOT, "fixtures");

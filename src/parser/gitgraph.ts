@@ -1,7 +1,7 @@
 // Ported from src/termaid/parser/gitgraph.py.
 
-import { MAIN_BRANCH, makeGitGraph, type Commit, type CommitType, type GitGraph } from "../model/gitgraph.js";
-import { pyRepr as repr, pyStrip, stripChars } from "../pycompat.js";
+import { MAIN_BRANCH, makeGitGraph, type Commit, type CommitType, type GitGraph } from "../model/gitgraph.ts";
+import { pyRepr as repr, pyStrip, stripChars } from "../pycompat.ts";
 
 const COMMENT = "%%";
 const DIRECTIVE = "%%{";
@@ -44,8 +44,11 @@ class GitGraphParser {
   private byId = new Map<string, Commit>();
   private branchNames = new Set<string>();
   private seq = 0;
+  private text: string;
 
-  constructor(private text: string) {}
+  constructor(text: string) {
+    this.text = text;
+  }
 
   parse(): GitGraph {
     const lines = this.preprocess(this.text);

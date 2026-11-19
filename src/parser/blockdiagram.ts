@@ -11,8 +11,8 @@ import {
   type Block,
   type BlockDiagram,
   type BlockLink,
-} from "../model/blockdiagram.js";
-import { PY_WORD, PY_WORD_CHARS, pyStrip } from "../pycompat.js";
+} from "../model/blockdiagram.ts";
+import { PY_WORD, PY_WORD_CHARS, pyStrip } from "../pycompat.ts";
 
 const W = PY_WORD;
 
@@ -94,8 +94,11 @@ interface Group {
 class BlockParser {
   private anonCount = 0;
   private spaceCount = 0;
+  private lines: string[];
 
-  constructor(private lines: string[]) {}
+  constructor(lines: string[]) {
+    this.lines = lines;
+  }
 
   parse(): BlockDiagram {
     const { blocks, links, columns } = this.group(0);

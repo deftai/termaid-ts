@@ -4,12 +4,12 @@
 // into the bytes a terminal paints with. Python builds a `rich.text.Text` here and lets Rich print it, so the port
 // builds the same object and asks it for what Rich would have written.
 
-import { Canvas } from "../renderer/canvas.js";
-import { getTheme, type Theme } from "../renderer/themes.js";
-import { Graph } from "../graph/model.js";
-import { renderGraphCanvas, type RenderOptions } from "../renderer/draw.js";
-import { formatHex, parseHex, Text, type RGB } from "../richcompat.js";
-import { pyStrip, rstrip } from "../pycompat.js";
+import { Canvas } from "../renderer/canvas.ts";
+import { getTheme, type Theme } from "../renderer/themes.ts";
+import { Graph } from "../graph/model.ts";
+import { renderGraphCanvas, type RenderOptions } from "../renderer/draw.ts";
+import { formatHex, parseHex, Text, type RGB } from "../richcompat.ts";
+import { pyStrip, rstrip } from "../pycompat.ts";
 
 const HEX_MARK = "#";
 const SHORT_HEX = 3;

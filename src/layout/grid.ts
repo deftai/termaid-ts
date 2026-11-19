@@ -8,17 +8,17 @@
 // DRAW (x, y): character positions in the output. A column's width and a row's height vary with content, padding, gap
 // and subgraph borders, so one grid cell can span many characters.
 
-import { Direction, Graph, isHorizontal, normalized, type Subgraph } from "../graph/model.js";
-import { adjustForNegativeBounds, computeDrawCoords } from "./coordinates.js";
+import { Direction, Graph, isHorizontal, normalized, type Subgraph } from "../graph/model.ts";
+import { adjustForNegativeBounds, computeDrawCoords } from "./coordinates.ts";
 import {
   assignLayers,
   computeGapExpansions,
   expandSubgraphEdges,
   orderLayers,
   separateSubgraphLayers,
-} from "./layers.js";
-import { computeSizes, normalizeSizes, placeNodes } from "./placement.js";
-import { computeSubgraphBounds, expandGapsForSubgraphs } from "./subgraphs.js";
+} from "./layers.ts";
+import { computeSizes, normalizeSizes, placeNodes } from "./placement.ts";
+import { computeSubgraphBounds, expandGapsForSubgraphs } from "./subgraphs.ts";
 
 /** Grid distance between two node centres: three cells of block and one of gap. */
 export const STRIDE = 4;

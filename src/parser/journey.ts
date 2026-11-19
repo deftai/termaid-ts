@@ -1,7 +1,7 @@
 // Ported from src/termaid/parser/journey.py.
 
-import { DEFAULT_SCORE, makeJourney, makeJourneySection, type Journey, type JourneySection } from "../model/journey.js";
-import { pyInt, pyStrip, splitLines } from "../pycompat.js";
+import { DEFAULT_SCORE, makeJourney, makeJourneySection, type Journey, type JourneySection } from "../model/journey.ts";
+import { pyInt, pyStrip, splitLines } from "../pycompat.ts";
 
 const COMMENT = "%%";
 const TITLE = "title ";

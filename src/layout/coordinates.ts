@@ -3,7 +3,7 @@
 // Grid positions turned into character positions, and the whole drawing pushed back into positive space where a
 // subgraph's border would otherwise sit off the left or the top of the canvas.
 
-import type { GridLayout } from "./grid.js";
+import type { GridLayout } from "./grid.ts";
 
 /** A cell nothing sized. */
 const UNSIZED = 1;

@@ -58,7 +58,8 @@
     "probe": "bun scripts/probe.ts",
     "probe:controls": "bun scripts/probe-controls.ts",
     "audit": "bun scripts/audit.ts",
-    "verify": "bun run typecheck && bun test && bun scripts/ourtakes.ts --check",
+    "verify:node": "node scripts/node-parity.ts",
+    "verify": "bun run typecheck && bun test && bun scripts/ourtakes.ts --check && bun run verify:node",
     "prepack": "bun run build",
     "ourtakes": "bun scripts/ourtakes.ts"
   },

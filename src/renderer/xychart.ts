@@ -3,10 +3,10 @@
 // Bars and lines on labelled axes. A chart declared horizontal is only drawn that way where it holds bars alone: a
 // line needs a continuous axis to say anything.
 
-import type { XYChart } from "../model/xychart.js";
-import { formatFixed } from "../pycompat.js";
-import { displayWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
+import type { XYChart } from "../model/xychart.ts";
+import { formatFixed } from "../pycompat.ts";
+import { displayWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
 
 /** Rows of data in the vertical chart, and columns of it in the horizontal one. */
 const CHART_H = 15;

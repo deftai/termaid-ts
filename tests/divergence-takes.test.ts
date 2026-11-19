@@ -9,7 +9,7 @@ import { describe, it, expect } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DIVERGENCES, THEME, WIDTHS, drawn, sourcePath, sources, takePath } from "../scripts/ourtakes.js";
+import { DIVERGENCES, THEME, WIDTHS, drawn, sourcePath, sources, takePath } from "../scripts/ourtakes.ts";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const FIXTURES = path.join(ROOT, "fixtures");

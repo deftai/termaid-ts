@@ -7,11 +7,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { jsonToMermaid } from "./ingest.js";
-import { parse, render, renderThemedText, type Options } from "./index.js";
-import { printToConsole, Text } from "./richcompat.js";
-import { ljust, pyStrip } from "./pycompat.js";
-import { displayWidth } from "./utils.js";
+import { jsonToMermaid } from "./ingest.ts";
+import { parse, render, renderThemedText, type Options } from "./index.ts";
+import { printToConsole, Text } from "./richcompat.ts";
+import { ljust, pyStrip } from "./pycompat.ts";
+import { displayWidth } from "./utils.ts";
 
 const PROGRAM = "termaid";
 const NEWLINE = "\n";

@@ -1,6 +1,6 @@
 // Ported from src/termaid/model/gantt.py.
 
-import type { CivilDate } from "../pydate.js";
+import type { CivilDate } from "../pydate.ts";
 
 /** The default a `dateFormat` directive overrides, spelled in dayjs tokens the way mermaid spells it. */
 export const DEFAULT_DATE_FORMAT = "YYYY-MM-DD";

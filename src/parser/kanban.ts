@@ -2,8 +2,8 @@
 //
 // A board is written by INDENTATION alone: the shallowest lines are the columns, everything deeper is a card.
 
-import { makeKanban, makeKanbanColumn, type Kanban, type KanbanColumn } from "../model/kanban.js";
-import { lstrip, PY_WORD, pyStrip, rstrip, splitLines, stripChars } from "../pycompat.js";
+import { makeKanban, makeKanbanColumn, type Kanban, type KanbanColumn } from "../model/kanban.ts";
+import { lstrip, PY_WORD, pyStrip, rstrip, splitLines, stripChars } from "../pycompat.ts";
 
 const COMMENT = "%%";
 /** The `id[Title]` form, where only the bracketed half is shown. */

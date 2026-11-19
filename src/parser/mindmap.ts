@@ -1,7 +1,7 @@
 // Ported from src/termaid/parser/mindmap.py.
 
-import { makeMindmap, makeMindmapNode, type Mindmap, type MindmapNode } from "../model/mindmap.js";
-import { lstrip, pyStrip, rstrip, splitLines } from "../pycompat.js";
+import { makeMindmap, makeMindmapNode, type Mindmap, type MindmapNode } from "../model/mindmap.ts";
+import { lstrip, pyStrip, rstrip, splitLines } from "../pycompat.ts";
 
 const COMMENT = "%%";
 

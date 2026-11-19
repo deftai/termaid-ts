@@ -3,7 +3,7 @@
 // The one place the reference reaches for `unicodedata`: how many terminal columns a character eats. Everything the
 // layout squares up is measured through here, so a width that disagrees with the reference misplaces every box.
 
-import { isFullwidthOrWide } from "./data/eastasianwidth.js";
+import { isFullwidthOrWide } from "./data/eastasianwidth.ts";
 
 /** What the reference widens on top of East Asian Width: symbols, dingbats, emoji, variation selectors. */
 const SYMBOL_RANGES: ReadonlyArray<readonly [number, number]> = [

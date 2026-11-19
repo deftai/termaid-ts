@@ -3,7 +3,7 @@
 // Which layer a node sits in (its depth from a root) and in what order the nodes of one layer run, ordered by a
 // barycentre heuristic so edges cross as little as they can.
 
-import { isSelfReference, isVertical, makeEdge, normalized, type Edge, type Graph, type Subgraph } from "../graph/model.js";
+import { isSelfReference, isVertical, makeEdge, normalized, type Edge, type Graph, type Subgraph } from "../graph/model.ts";
 
 /** A back edge is worth no layer, and an edge with no length named runs one layer. */
 const ONE_LAYER = 1;

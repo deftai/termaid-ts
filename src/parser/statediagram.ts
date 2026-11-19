@@ -11,9 +11,9 @@ import {
   makeSubgraph,
   type Subgraph,
   EdgeStyle,
-} from "../graph/model.js";
-import { NodeShape } from "../graph/shapes.js";
-import { PY_WORD, pyStrip } from "../pycompat.js";
+} from "../graph/model.ts";
+import { NodeShape } from "../graph/shapes.ts";
+import { PY_WORD, pyStrip } from "../pycompat.ts";
 
 const START_ID = "[*]_start";
 const END_ID = "[*]_end";
@@ -52,8 +52,11 @@ class StateDiagramParser {
   private subgraphStack: Subgraph[] = [];
   private startCount = 0;
   private endCount = 0;
+  private text: string;
 
-  constructor(private text: string) {}
+  constructor(text: string) {
+    this.text = text;
+  }
 
   parse(): Graph {
     const lines = this.preprocess(this.text);

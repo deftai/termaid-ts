@@ -3,9 +3,9 @@
 // Where each node's 3x3 block lands on the grid, how wide a column and how tall a row must be to hold what it carries,
 // and the room a labelled edge needs in the gap between two layers.
 
-import { Direction, isHorizontal, isVertical, normalized, type Graph } from "../graph/model.js";
-import { NodeShape } from "../graph/shapes.js";
-import { displayWidth } from "../utils.js";
+import { Direction, isHorizontal, isVertical, normalized, type Graph } from "../graph/model.ts";
+import { NodeShape } from "../graph/shapes.ts";
+import { displayWidth } from "../utils.ts";
 import {
   cellKey,
   makePlacement,
@@ -16,7 +16,7 @@ import {
   type GridCoord,
   type GridLayout,
   type NodePlacement,
-} from "./grid.js";
+} from "./grid.ts";
 
 /** A cell nothing sized. */
 const UNSIZED = 1;

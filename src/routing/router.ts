@@ -3,16 +3,17 @@
 // Where an edge leaves a node and where it arrives, the A* run between the two, and the choice between the path that
 // follows the flow and the one that cuts across it.
 
-import { Direction, isHorizontal, isSelfReference, normalized, type Edge, type Graph, type Subgraph } from "../graph/model.js";
-import { makePlacement, type GridLayout, type NodePlacement, type SubgraphBounds } from "../layout/grid.js";
-import { cellId, findPath, simplifyPath, type Cell } from "./pathfinder.js";
+import { Direction, isHorizontal, isSelfReference, normalized, type Edge, type Graph, type Subgraph } from "../graph/model.ts";
+import { makePlacement, type GridLayout, type NodePlacement, type SubgraphBounds } from "../layout/grid.ts";
+import { cellId, findPath, simplifyPath, type Cell } from "./pathfinder.ts";
 
-export enum AttachDir {
-  TOP = "TOP",
-  BOTTOM = "BOTTOM",
-  LEFT = "LEFT",
-  RIGHT = "RIGHT",
-}
+export const AttachDir = {
+  TOP: "TOP",
+  BOTTOM: "BOTTOM",
+  LEFT: "LEFT",
+  RIGHT: "RIGHT",
+} as const;
+export type AttachDir = (typeof AttachDir)[keyof typeof AttachDir];
 
 export interface RoutedEdge {
   edge: Edge;

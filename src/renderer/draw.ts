@@ -3,14 +3,14 @@
 // Layout, routing and drawing brought together, back to front: subgraph boxes, node boxes, edge lines, corners,
 // arrowheads, the tees where an edge leaves a border, edge labels, subgraph labels, notes.
 
-import { ArrowType, Direction, EdgeStyle, type Graph } from "../graph/model.js";
-import { NodeShape } from "../graph/shapes.js";
-import { computeLayout, type GridLayout } from "../layout/grid.js";
-import { routeEdges, type RoutedEdge } from "../routing/router.js";
-import { displayWidth, truncateToWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
-import { ASCII, UNICODE, type CharSet } from "./charset.js";
-import { drawRectangle, SHAPE_RENDERERS } from "./shapes.js";
+import { ArrowType, Direction, EdgeStyle, type Graph } from "../graph/model.ts";
+import { NodeShape } from "../graph/shapes.ts";
+import { computeLayout, type GridLayout } from "../layout/grid.ts";
+import { routeEdges, type RoutedEdge } from "../routing/router.ts";
+import { displayWidth, truncateToWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
+import { ASCII, UNICODE, type CharSet } from "./charset.ts";
+import { drawRectangle, SHAPE_RENDERERS } from "./shapes.ts";
 
 /** Style keys the theme paints from. */
 const STYLE_SUBGRAPH = "subgraph";

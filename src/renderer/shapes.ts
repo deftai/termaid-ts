@@ -2,10 +2,10 @@
 //
 // One drawing routine per node shape, each one putting its own border on the canvas and centring the label inside it.
 
-import { NodeShape } from "../graph/shapes.js";
-import { displayWidth } from "../utils.js";
-import type { Canvas } from "./canvas.js";
-import type { CharSet } from "./charset.js";
+import { NodeShape } from "../graph/shapes.ts";
+import { displayWidth } from "../utils.ts";
+import type { Canvas } from "./canvas.ts";
+import type { CharSet } from "./charset.ts";
 
 export type ShapeRenderer = (
   canvas: Canvas,

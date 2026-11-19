@@ -3,11 +3,11 @@
 // A tree radiating from its root, children branching right. Past a threshold the first few spill LEFT instead, so a
 // root with many children stays balanced. Each subtree is rendered as a block of lines plus the row its parent joins.
 
-import type { Mindmap, MindmapNode } from "../model/mindmap.js";
-import { makeMindmapNode } from "../model/mindmap.js";
-import { ljust, rjust } from "../pycompat.js";
-import { displayWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
+import type { Mindmap, MindmapNode } from "../model/mindmap.ts";
+import { makeMindmapNode } from "../model/mindmap.ts";
+import { ljust, rjust } from "../pycompat.ts";
+import { displayWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
 
 /** Past this many children on the root, some of them spill to the left. */
 const OVERFLOW_THRESHOLD = 6;

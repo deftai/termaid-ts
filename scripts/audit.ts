@@ -7,7 +7,7 @@
 //
 // Le rendu est fait large, pour que la compaction ne puisse jamais expliquer un manque.
 
-import { render } from "../src/index.js";
+import { render } from "../src/index.ts";
 
 const ELLIPSIS = "…";
 const WIDE = 200;

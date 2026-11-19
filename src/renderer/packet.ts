@@ -3,9 +3,9 @@
 // Bit-aligned boxes, wrapping to a new strip every row of bits. A label too long for its field is cut and spelled out
 // in full underneath, so nothing is lost to the width of the field it sits in.
 
-import { fieldBits, type Packet } from "../model/packet.js";
-import { displayWidth, truncateToWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
+import { fieldBits, type Packet } from "../model/packet.ts";
+import { displayWidth, truncateToWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
 
 /** Character columns one bit takes. */
 const BITS_PER_COL = 3;

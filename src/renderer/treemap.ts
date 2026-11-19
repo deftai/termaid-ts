@@ -3,11 +3,11 @@
 // Nested rectangles, each one as wide as its share of the whole. A node holding children is drawn dashed and its
 // children laid out inside it; a leaf is drawn solid and carries its value.
 
-import { totalValue, treemapTotal, type Treemap, type TreemapNode } from "../model/treemap.js";
-import { formatG, pyRound } from "../pycompat.js";
-import { displayWidth, truncateToWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
-import { ASCII, UNICODE, type CharSet } from "./charset.js";
+import { totalValue, treemapTotal, type Treemap, type TreemapNode } from "../model/treemap.ts";
+import { formatG, pyRound } from "../pycompat.ts";
+import { displayWidth, truncateToWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
+import { ASCII, UNICODE, type CharSet } from "./charset.ts";
 
 const MIN_BOX_W = 4;
 const MIN_BOX_H = 3;

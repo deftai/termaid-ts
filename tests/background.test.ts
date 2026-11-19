@@ -4,9 +4,9 @@
 // must not move a single byte. Everything else follows from the mirror being a flip about luminance.
 
 import { describe, it, expect } from "bun:test";
-import { render, renderThemed } from "../src/index.js";
-import { styleCodes } from "../src/richcompat.js";
-import type { Background } from "../src/background.js";
+import { render, renderThemed } from "../src/index.ts";
+import { styleCodes } from "../src/richcompat.ts";
+import type { Background } from "../src/background.ts";
 
 /** The seam under test, called the way `renderCells` calls it: one definition, one side, the codes it writes. */
 const styleCodesOf = (definition: string, side: Background): string => styleCodes(definition, side);

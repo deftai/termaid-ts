@@ -3,10 +3,10 @@
 // Tasks down the side, time across. Each bar is placed by where its dates fall in the whole span, so the chart says
 // nothing about a task with no dates at all.
 
-import type { Gantt } from "../model/gantt.js";
-import { formatMonthDay, today, type CivilDate } from "../pydate.js";
-import { displayWidth, truncateToWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
+import type { Gantt } from "../model/gantt.ts";
+import { formatMonthDay, today, type CivilDate } from "../pydate.ts";
+import { displayWidth, truncateToWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
 
 /** The width the chart is drawn at, which the CLI never overrides. */
 const DEFAULT_WIDTH = 80;

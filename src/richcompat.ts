@@ -4,9 +4,9 @@
 // bytes. Only what a theme or `_css_to_rich_style` can actually spell is implemented, so an unknown word raises rather
 // than paints something Rich would not.
 
-import { LIGHT_BACKGROUND, mirrorRgb, mirrorStandard, type Background } from "./background.js";
-import { displayWidth } from "./utils.js";
-import { pyStrip } from "./pycompat.js";
+import { LIGHT_BACKGROUND, mirrorRgb, mirrorStandard, type Background } from "./background.ts";
+import { displayWidth } from "./utils.ts";
+import { pyStrip } from "./pycompat.ts";
 
 /** Rich's escape introducer, and the sequence closing a styled run. */
 const CSI = "\x1b[";

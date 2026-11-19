@@ -7,7 +7,7 @@ import { describe, it, expect } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { declaredType } from "../src/index.js";
+import { declaredType } from "../src/index.ts";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const FIXTURES = path.join(ROOT, "fixtures");

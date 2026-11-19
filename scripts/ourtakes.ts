@@ -16,7 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { printToConsole, render, renderThemedText } from "../src/index.js";
+import { printToConsole, render, renderThemedText } from "../src/index.ts";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const DIVERGENCES = path.join(ROOT, "fixtures", "divergences");

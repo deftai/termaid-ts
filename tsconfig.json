@@ -7,6 +7,9 @@
     "noUncheckedIndexedAccess": false,
     "exactOptionalPropertyTypes": false,
     "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
     "noEmit": true
   },
   "include": ["src", "tests", "scripts"]

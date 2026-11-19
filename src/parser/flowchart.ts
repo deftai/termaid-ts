@@ -14,9 +14,9 @@ import {
   type LabelSegment,
   type Node,
   type Subgraph,
-} from "../graph/model.js";
-import { NodeShape } from "../graph/shapes.js";
-import { pyStrip } from "../pycompat.js";
+} from "../graph/model.ts";
+import { NodeShape } from "../graph/shapes.ts";
+import { pyStrip } from "../pycompat.ts";
 
 /** Node shape delimiters, MOST SPECIFIC FIRST: `((` must be tried before `(` or a circle reads as a rounded box. */
 const SHAPE_PATTERNS: ReadonlyArray<readonly [string, string, NodeShape]> = [
@@ -316,8 +316,11 @@ class FlowchartParser {
   private readonly subgraphStack: Subgraph[] = [];
   /** Nodes written with an explicit shape, which is what tells a real node from a subgraph reference. */
   private readonly shapedNodeIds = new Set<string>();
+  private readonly text: string;
 
-  constructor(private readonly text: string) {}
+  constructor(text: string) {
+    this.text = text;
+  }
 
   parse(): Graph {
     const lines = this.preprocess(this.text);
@@ -688,8 +691,8 @@ class FlowchartParser {
     const s = pyStrip(arrow);
     const hasStart = s.startsWith("<") || s.startsWith("o") || s.startsWith("x");
     const hasEnd = s.endsWith(">") || s.endsWith("x") || s.endsWith("o");
-    let typeStart = ArrowType.ARROW;
-    let typeEnd = ArrowType.ARROW;
+    let typeStart: ArrowType = ArrowType.ARROW;
+    let typeEnd: ArrowType = ArrowType.ARROW;
     if (s.startsWith("o")) typeStart = ArrowType.CIRCLE;
     else if (s.startsWith("x")) typeStart = ArrowType.CROSS;
     if (s.endsWith("o")) typeEnd = ArrowType.CIRCLE;

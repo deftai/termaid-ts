@@ -6,7 +6,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { printToConsole, render, renderThemedText } from "../src/index.js";
+import { printToConsole, render, renderThemedText } from "../src/index.ts";
 
 const F = new URL("../fixtures", import.meta.url).pathname;
 const THEME = "neon";

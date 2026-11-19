@@ -10,11 +10,11 @@ import {
   type Member,
   type Note,
   type Relationship,
-} from "../model/classdiagram.js";
-import { pyCompare } from "../pycompat.js";
-import { displayWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
-import { ASCII, UNICODE, type CharSet } from "./charset.js";
+} from "../model/classdiagram.ts";
+import { pyCompare } from "../pycompat.ts";
+import { displayWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
+import { ASCII, UNICODE, type CharSet } from "./charset.ts";
 
 const CLASS_PAD = 2;
 const MIN_BOX_WIDTH = 16;

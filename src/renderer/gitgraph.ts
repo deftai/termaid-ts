@@ -3,10 +3,10 @@
 // One line per branch, one marker per commit, with the vertical joins where a branch forks or is merged back. Markers
 // and labels are drawn LAST, so a line never runs over the commit it belongs to.
 
-import type { Commit, CommitType, GitGraph } from "../model/gitgraph.js";
-import { Canvas } from "./canvas.js";
-import { ASCII, UNICODE, type CharSet } from "./charset.js";
-import { displayWidth } from "../utils.js";
+import type { Commit, CommitType, GitGraph } from "../model/gitgraph.ts";
+import { Canvas } from "./canvas.ts";
+import { ASCII, UNICODE, type CharSet } from "./charset.ts";
+import { displayWidth } from "../utils.ts";
 
 /** The least room between two commit markers, whatever their labels take. */
 const MIN_COMMIT_GAP = 6;

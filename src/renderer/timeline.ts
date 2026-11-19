@@ -2,9 +2,9 @@
 //
 // A vertical line, its sections and events hung off it. Nothing here is laid out or routed: the drawing is the text.
 
-import type { Timeline } from "../model/timeline.js";
-import { displayWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
+import type { Timeline } from "../model/timeline.ts";
+import { displayWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
 
 /** The style keys a theme paints these lines from. */
 const STYLE_LABEL = "label";

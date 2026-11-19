@@ -3,10 +3,10 @@
 // A pie has no honest form in a terminal, so the reference draws bars: one stacked band showing the parts of the whole,
 // then one bar per slice.
 
-import type { PieChart } from "../model/piechart.js";
-import { formatFixed, formatG, pyRound, rjust } from "../pycompat.js";
-import { displayWidth } from "../utils.js";
-import { Canvas } from "./canvas.js";
+import type { PieChart } from "../model/piechart.ts";
+import { formatFixed, formatG, pyRound, rjust } from "../pycompat.ts";
+import { displayWidth } from "../utils.ts";
+import { Canvas } from "./canvas.ts";
 
 const FILL_CHARS = ["█", "░", "▒", "▚", "▞", "▄", "▀", "▌"];
 const FILL_CHARS_ASCII = ["#", "*", "+", "~", ":", ".", "o", "="];
