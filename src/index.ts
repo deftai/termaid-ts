@@ -1,7 +1,7 @@
 // The package's one entry: a mermaid source in, the drawing a terminal shows out. Everything under it mirrors the
-// Python module tree of the reference (model/, graph/, parser/, layout/, routing/, renderer/), file for file.
+// Python module tree of the reference (model/, graph/, parser/, layout/, routing/, renderer/, output/), file for file.
 //
-// Ported from src/termaid/__init__.py and the auto-fit of src/termaid/cli.py, which is part of what `--width` means.
+// Ported from src/termaid/__init__.py and the width fitting of src/termaid/utils.py.
 
 import { Graph } from "./graph/model.ts";
 import { parseArchitecture } from "./parser/architecture.ts";
@@ -22,10 +22,13 @@ import { parseStateDiagram } from "./parser/statediagram.ts";
 import { parseTreemap } from "./parser/treemap.ts";
 import { parseXYChart } from "./parser/xychart.ts";
 import { parseTimeline } from "./parser/timeline.ts";
-import { DEFAULT_RENDER, renderGraph, type RenderOptions } from "./renderer/draw.ts";
-import { renderRich, renderSequenceRich } from "./output/rich.ts";
+import { renderGraphCanvas, type RenderOptions } from "./renderer/draw.ts";
+import { renderGraphRich, renderSequenceRich } from "./output/rich.ts";
+import { serializeCanvas, type StyledChunk, type StyledDocument } from "./output/styled.ts";
 import { Text } from "./richcompat.ts";
 import type { Background } from "./background.ts";
+import type { Canvas } from "./renderer/canvas.ts";
+import { buildCharset } from "./renderer/charset.ts";
 import { renderGantt } from "./renderer/gantt.ts";
 import { renderBlockDiagram } from "./renderer/blockdiagram.ts";
 import { renderClassDiagram } from "./renderer/classdiagram.ts";
@@ -41,8 +44,9 @@ import { renderSequence } from "./renderer/sequence.ts";
 import { renderTimeline } from "./renderer/timeline.ts";
 import { renderXYChart } from "./renderer/xychart.ts";
 import { renderTreemap } from "./renderer/treemap.ts";
-import { displayWidth } from "./utils.ts";
-import { pyStrip } from "./pycompat.ts";
+import { completePartial } from "./partial.ts";
+import { DIRECTIVE, fitToWidth } from "./utils.ts";
+import { PY_SPACE_CHARS, pyStrip } from "./pycompat.ts";
 
 export { Graph } from "./graph/model.ts";
 export { parseArchitecture } from "./parser/architecture.ts";
@@ -81,350 +85,400 @@ export { renderXYChart } from "./renderer/xychart.ts";
 export { renderTreemap } from "./renderer/treemap.ts";
 export { renderGraphRich, renderRich, renderSequenceRich } from "./output/rich.ts";
 export { serializeCanvas, type StyledChunk, type StyledDocument } from "./output/styled.ts";
+export { ARROW_STYLES, buildCharset, defaultCharset, type CharSet } from "./renderer/charset.ts";
 export { getTheme, THEMES, type Theme } from "./renderer/themes.ts";
 export { printToConsole, Text, CONSOLE_WIDTH } from "./richcompat.ts";
-export { displayWidth } from "./utils.ts";
+export { displayWidth, fitToWidth, maxLineWidth, wrapDisplayText } from "./utils.ts";
+export { completePartial } from "./partial.ts";
+export { splitMarkdown, type Segment } from "./markdown.ts";
+export { Diagnostic, type DiagnosticDict, type DiagnosticSeverity } from "./diagnostics.ts";
 export { DARK_BACKGROUND, LIGHT_BACKGROUND, type Background } from "./background.ts";
 
-/** YAML frontmatter, which the reference drops before it reads a line of the diagram. */
-const FRONTMATTER_RE = /^---\s*\n[\s\S]*?\n---\s*\n/;
+export const VERSION = "0.12.0";
+
+const FRONTMATTER_RE = new RegExp(`^---[${PY_SPACE_CHARS}]*\\n[\\s\\S]*?\\n---[${PY_SPACE_CHARS}]*\\n`, "u");
+const LEADING_DIRECTIVES_RE = new RegExp(`^(?:${DIRECTIVE}|%%[^\\n]*|[${PY_SPACE_CHARS}]+)*`, "u");
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g;
+const CARRIAGE_RETURN_RE = /\r\n?/g;
+
 const STATE_DIAGRAM = "stateDiagram";
+const FLOWCHART = "flowchart";
+const DEFAULT_THEME = "default";
+const DEFAULT_ARROW_STYLE = "pointer";
 
-/** The steps a too-wide drawing is retried at, in order: the gap first, then the horizontal padding. */
-const COMPACT_STEPS: ReadonlyArray<{ gap?: number; paddingX?: number }> = [
-  { gap: 2 },
-  { gap: 1 },
-  { gap: 1, paddingX: 2 },
-  { gap: 1, paddingX: 0 },
-];
-
-export interface Options extends Partial<RenderOptions> {
-  /** A ceiling on the output's width: past it, the drawing is redrawn tighter until it fits or runs out of steps. */
-  width?: number;
-  /**
-   * ◉ The side the terminal is: every theme was drawn for `dark`, which is the default and mirrors nothing. On
-   * `light` each colour is flipped about its luminance, hue kept, so a pale foreground stops being fog on white.
-   * Layout is untouched either way: the same drawing, painted for the other side.
-   */
-  background?: Background;
-  /**
-   * ◉ Enable this port's deliberate layout/parsing divergences from Python termaid (default: `false`).
-   * With `false`, the port reproduces the Python reference byte for byte.
-   */
-  divergences?: boolean;
-}
-
-/** The FLOWCHART's own defaults. A renderer of its own keeps its own, unless the caller has moved off these. */
 const FLOWCHART_PADDING_X = 4;
 const FLOWCHART_PADDING_Y = 2;
 const FLOWCHART_GAP = 4;
 
-/** What the caller actually asked for, or nothing at all where the value is the flowchart's default. */
 const overridden = (value: number | undefined, base: number): number | undefined =>
   value === undefined || value === base ? undefined : value;
 
-type Draw = (source: string, options: Partial<RenderOptions>) => string;
-type Paint = (source: string, options: Partial<RenderOptions>, theme: string) => Text;
-
-/**
- * The diagram types drawn by a renderer of their own, each read off the first word of the source.
- *
- * `draw` and `paint` are the SAME dispatch written twice in the reference, and they do not pass the same arguments:
- * a themed journey, mindmap, packet or xychart is handed the source alone, so its renderer falls back to its own
- * padding and gap and the drawing comes out WIDER than the plain one. The prefix is stated once here, the divergence
- * is kept where the reference put it.
- */
-const SPECIALISED: ReadonlyArray<{ prefix: string; draw: Draw; paint: Paint }> = [
-  {
-    prefix: "sequenceDiagram",
-    draw: (source, o) =>
-      renderSequence(
-        parseSequenceDiagram(source),
-        o.useAscii ?? false,
-        overridden(o.paddingX, FLOWCHART_PADDING_X),
-        overridden(o.gap, FLOWCHART_GAP)
-      ).toString(),
-    paint: (source, o, theme) =>
-      renderSequenceRich(
-        renderSequence(
-          parseSequenceDiagram(source),
-          o.useAscii ?? false,
-          overridden(o.paddingX, FLOWCHART_PADDING_X),
-          overridden(o.gap, FLOWCHART_GAP)
-        ),
-        theme
-      ),
-  },
-  {
-    prefix: "classDiagram",
-    draw: (source, o) =>
-      renderClassDiagram(
-        parseClassDiagram(source),
-        o.useAscii ?? false,
-        overridden(o.paddingX, FLOWCHART_PADDING_X),
-        overridden(o.gap, FLOWCHART_GAP)
-      ).toString(),
-    paint: (source, o, theme) =>
-      renderSequenceRich(
-        renderClassDiagram(
-          parseClassDiagram(source),
-          o.useAscii ?? false,
-          overridden(o.paddingX, FLOWCHART_PADDING_X),
-          overridden(o.gap, FLOWCHART_GAP)
-        ),
-        theme
-      ),
-  },
-  {
-    prefix: "erDiagram",
-    draw: (source, o) =>
-      renderERDiagram(
-        parseERDiagram(source),
-        o.useAscii ?? false,
-        overridden(o.paddingX, FLOWCHART_PADDING_X),
-        overridden(o.gap, FLOWCHART_GAP)
-      ).toString(),
-    paint: (source, o, theme) =>
-      renderSequenceRich(
-        renderERDiagram(
-          parseERDiagram(source),
-          o.useAscii ?? false,
-          overridden(o.paddingX, FLOWCHART_PADDING_X),
-          overridden(o.gap, FLOWCHART_GAP)
-        ),
-        theme
-      ),
-  },
-  {
-    prefix: "block",
-    draw: (source, o) =>
-      renderBlockDiagram(
-        parseBlockDiagram(source),
-        o.useAscii ?? false,
-        overridden(o.paddingX, FLOWCHART_PADDING_X),
-        overridden(o.gap, FLOWCHART_GAP)
-      ).toString(),
-    paint: (source, o, theme) =>
-      renderSequenceRich(
-        renderBlockDiagram(
-          parseBlockDiagram(source),
-          o.useAscii ?? false,
-          overridden(o.paddingX, FLOWCHART_PADDING_X),
-          overridden(o.gap, FLOWCHART_GAP)
-        ),
-        theme
-      ),
-  },
-  {
-    prefix: "gitGraph",
-    draw: (source, o) => renderGitGraph(parseGitGraph(source), o.useAscii ?? false).toString(),
-    paint: (source, o, theme) => renderSequenceRich(renderGitGraph(parseGitGraph(source), o.useAscii ?? false), theme),
-  },
-  {
-    prefix: "gantt",
-    draw: (source, o) => renderGantt(parseGantt(source), o.useAscii ?? false).toString(),
-    paint: (source, o, theme) => renderSequenceRich(renderGantt(parseGantt(source), o.useAscii ?? false), theme),
-  },
-  {
-    prefix: "architecture",
-    draw: (source, o) => renderGraph(parseArchitecture(source), o),
-    // The gap is NOT handed on here, where the plain call above hands on everything.
-    paint: (source, o, theme) =>
-      renderRich(
-        parseArchitecture(source),
-        {
-          useAscii: o.useAscii ?? DEFAULT_RENDER.useAscii,
-          paddingX: o.paddingX ?? DEFAULT_RENDER.paddingX,
-          paddingY: o.paddingY ?? DEFAULT_RENDER.paddingY,
-          roundedEdges: o.roundedEdges ?? DEFAULT_RENDER.roundedEdges,
-          divergences: o.divergences ?? DEFAULT_RENDER.divergences,
-        },
-        theme
-      ),
-  },
-  {
-    prefix: "pie",
-    draw: (source, o) => renderPieChart(parsePieChart(source), o.useAscii ?? false).toString(),
-    paint: (source, o, theme) => renderSequenceRich(renderPieChart(parsePieChart(source), o.useAscii ?? false), theme),
-  },
-  {
-    prefix: "treemap",
-    draw: (source, o) => renderTreemap(parseTreemap(source), o.useAscii ?? false).toString(),
-    paint: (source, o, theme) => renderSequenceRich(renderTreemap(parseTreemap(source), o.useAscii ?? false), theme),
-  },
-  {
-    prefix: "mindmap",
-    draw: (source, o) =>
-      renderMindmap(parseMindmap(source, o.divergences ?? false), o.useAscii ?? false, o.roundedEdges ?? true).toString(),
-    paint: (source, o, theme) =>
-      renderSequenceRich(
-        renderMindmap(parseMindmap(source, o.divergences ?? false), o.useAscii ?? false, o.roundedEdges ?? true),
-        theme
-      ),
-  },
-  {
-    prefix: "packet",
-    draw: (source, o) =>
-      renderPacket(
-        parsePacket(source),
-        o.useAscii ?? false,
-        o.roundedEdges ?? true,
-        overridden(o.paddingY, FLOWCHART_PADDING_Y)
-      ).toString(),
-    paint: (source, o, theme) => renderSequenceRich(renderPacket(parsePacket(source), o.useAscii ?? false), theme),
-  },
-  {
-    prefix: "xychart",
-    draw: (source, o) => renderXYChart(parseXYChart(source), o.useAscii ?? false, o.roundedEdges ?? true).toString(),
-    paint: (source, o, theme) =>
-      renderSequenceRich(renderXYChart(parseXYChart(source), o.useAscii ?? false, o.roundedEdges ?? true), theme),
-  },
-  {
-    prefix: "journey",
-    draw: (source, o) =>
-      renderJourney(
-        parseJourney(source),
-        o.useAscii ?? false,
-        overridden(o.paddingX, FLOWCHART_PADDING_X),
-        overridden(o.gap, FLOWCHART_GAP),
-        o.roundedEdges ?? true
-      ).toString(),
-    paint: (source, o, theme) => renderSequenceRich(renderJourney(parseJourney(source), o.useAscii ?? false), theme),
-  },
-  {
-    prefix: "timeline",
-    draw: (source, o) => renderTimeline(parseTimeline(source), o.useAscii ?? false).toString(),
-    paint: (source, o, theme) => renderSequenceRich(renderTimeline(parseTimeline(source), o.useAscii ?? false), theme),
-  },
-  {
-    prefix: "kanban",
-    draw: (source, o) =>
-      renderKanban(
-        parseKanban(source),
-        o.useAscii ?? false,
-        overridden(o.paddingX, FLOWCHART_PADDING_X),
-        overridden(o.gap, FLOWCHART_GAP)
-      ).toString(),
-    paint: (source, o, theme) =>
-      renderSequenceRich(
-        renderKanban(
-          parseKanban(source),
-          o.useAscii ?? false,
-          overridden(o.paddingX, FLOWCHART_PADDING_X),
-          overridden(o.gap, FLOWCHART_GAP)
-        ),
-        theme
-      ),
-  },
-  {
-    prefix: "quadrantChart",
-    draw: (source, o) => renderQuadrant(parseQuadrant(source), o.useAscii ?? false, o.divergences ?? false).toString(),
-    paint: (source, o, theme) =>
-      renderSequenceRich(renderQuadrant(parseQuadrant(source), o.useAscii ?? false, o.divergences ?? false), theme),
-  },
-];
-
-/** A gitGraph may declare itself in an init directive rather than in its first word. */
-const INIT_DIRECTIVE = "%%{init";
-const GIT_GRAPH = "gitGraph";
-
-const declared = (text: string): (typeof SPECIALISED)[number] | undefined =>
-  SPECIALISED.find(
-    (type) =>
-      text.startsWith(type.prefix) ||
-      (type.prefix === GIT_GRAPH && text.startsWith(INIT_DIRECTIVE) && text.includes(GIT_GRAPH))
-  );
-
-/** What `declaredType` answers for the family the fallback parser draws, whichever of its header words was used. */
-const FLOWCHART = "flowchart";
-
-/** What every entry point reads instead of the source it was handed: leading BOM stripped, `str.strip()` and no frontmatter. */
-const headed = (source: string): string => pyStrip(source.replace(/^\ufeff+/u, "")).replace(FRONTMATTER_RE, "");
-
-/**
- * The type a source DECLARES, read exactly the way the dispatch reads it, or null where it declares none this renderer
- * knows. null is not a refusal here: such a source still falls to the flowchart parser, which draws its lines as node
- * labels, the reference's own behaviour. It is the caller's one chance to tell a type from a NEWER mermaid apart from
- * a diagram, and to show the source rather than boxes of its syntax.
- */
-export function declaredType(source: string): string | null {
-  const text = headed(source);
-  const type = declared(text);
-  if (type !== undefined) return type.prefix;
-  if (text.startsWith(STATE_DIAGRAM)) return STATE_DIAGRAM;
-  return declaresFlowchart(text) ? FLOWCHART : null;
+/** Strip YAML frontmatter (`---...---`) from the beginning of mermaid source. */
+function stripFrontmatter(text: string): string {
+  return text.replace(FRONTMATTER_RE, "");
 }
 
-/** A mermaid source as a graph, the type read off its first word. */
-export function parse(source: string): Graph {
-  const text = headed(source);
+/** Normalize line endings, drop control characters, a byte order mark, and frontmatter. */
+export function prepareSource(source: string): string {
+  const cleaned = source.replace(/^\ufeff+/u, "").replace(CARRIAGE_RETURN_RE, "\n").replace(CONTROL_CHARS_RE, "");
+  return stripFrontmatter(pyStrip(cleaned));
+}
+
+/** Drop the `%%{...}%%` directives and `%%` comments before the diagram keyword. */
+export function skipDirectives(text: string): string {
+  const match = LEADING_DIRECTIVES_RE.exec(text);
+  return match !== null ? text.slice(match[0].length) : text;
+}
+
+export interface ParseOptions {
+  partial?: boolean;
+}
+
+/** Parse mermaid syntax and return a Graph model (auto-detects flowchart or state diagram). */
+export function parse(source: string, options: ParseOptions = {}): Graph {
+  const raw = options.partial ? completePartial(source) : source;
+  const text = skipDirectives(prepareSource(raw));
   if (text.startsWith(STATE_DIAGRAM)) return parseStateDiagram(text);
   return parseFlowchart(text);
 }
 
-const widestLine = (text: string): number => Math.max(0, ...text.split("\n").map(displayWidth));
-
-/** One drawing, at the sizes given, with no attempt to fit it anywhere. */
-function drawn(source: string, options: Partial<RenderOptions>): string {
-  const text = headed(source);
-  const type = declared(text);
-  if (type !== undefined) return type.draw(text, options);
-  return renderGraph(parse(text), options);
-}
-
-/** The same drawing, still carrying the style of every cell, which is what a theme needs. */
-function painted(source: string, options: Partial<RenderOptions>, theme: string): Text {
-  const text = headed(source);
-  const type = declared(text);
-  if (type !== undefined) return type.paint(text, options, theme);
-  return renderRich(parse(text), options, theme);
-}
+const SPECIALISED_PREFIXES: readonly string[] = [
+  "sequenceDiagram",
+  "classDiagram",
+  "erDiagram",
+  "block",
+  "gitGraph",
+  "gantt",
+  "architecture",
+  "pie",
+  "treemap",
+  "mindmap",
+  "packet",
+  "xychart",
+  "journey",
+  "timeline",
+  "kanban",
+  "quadrantChart",
+];
 
 /**
- * The reference's auto-fit: a drawing wider than the target is redrawn tighter, gap first and padding after, until it
- * fits or the steps run out. What is measured is the PLAIN text, a painted one carrying escape sequences that take no
- * room on screen.
+ * The type a source DECLARES, read the same way the dispatch reads it, or `null` where it declares none this renderer
+ * knows.
  */
-function fitted<T>(
-  produce: (options: Partial<RenderOptions>) => T,
-  plainOf: (result: T) => string,
-  options: Partial<RenderOptions>,
+export function declaredType(source: string): string | null {
+  const prepared = prepareSource(source);
+  const text = skipDirectives(prepared);
+  for (const prefix of SPECIALISED_PREFIXES) {
+    if (text.startsWith(prefix)) return prefix;
+  }
+  if (text.startsWith(STATE_DIAGRAM)) return STATE_DIAGRAM;
+  return declaresFlowchart(text) ? FLOWCHART : null;
+}
+
+export interface RenderStyledOptions {
+  useAscii?: boolean;
+  paddingX?: number;
+  paddingY?: number;
+  roundedEdges?: boolean;
+  gap?: number;
+  inlineEdgeLabels?: boolean;
+  maxLabelWidth?: number | null;
+  arrowStyle?: string;
+  partial?: boolean;
+  width?: number;
+  divergences?: boolean;
+}
+
+export interface Options extends Partial<RenderOptions> {
+  /** Arrowhead style for Unicode output: `"pointer"` (default), `"triangle"`, or `"outline"`. */
+  arrowStyle?: string;
+  /** Whether the source is the start of a diagram still streaming in. */
+  partial?: boolean;
+  /** A ceiling on the output's width: past it, the drawing is redrawn tighter until it fits or runs out of steps. */
+  width?: number;
+  /**
+   * ◉ The side the terminal is: `dark` (default) or `light`.
+   */
+  background?: Background;
+  /**
+   * ◉ Enable this port's deliberate layout/parsing divergences from Python termaid (default: `false`).
+   */
+  divergences?: boolean;
+}
+
+const RENDER_STYLED_PARAMETERS: readonly string[] = [
+  "source",
+  "use_ascii",
+  "padding_x",
+  "padding_y",
+  "rounded_edges",
+  "gap",
+  "inline_edge_labels",
+  "max_label_width",
+  "arrow_style",
+  "partial",
+];
+
+/** Python's parameter names for `render_styled`, in snake_case and in signature order. */
+export function renderStyledParameters(): readonly string[] {
+  return RENDER_STYLED_PARAMETERS;
+}
+
+interface Rendered {
+  canvas: Canvas | null;
+  graph: Graph | null;
+}
+
+interface InternalOptions {
+  useAscii: boolean;
+  paddingX: number;
+  paddingY: number;
+  roundedEdges: boolean;
+  gap: number;
+  inlineEdgeLabels: boolean;
+  maxLabelWidth: number | null;
+  arrowStyle: string;
+  partial: boolean;
+  divergences: boolean;
+}
+
+function resolveOptions(options: RenderStyledOptions | Options): InternalOptions {
+  return {
+    useAscii: options.useAscii ?? false,
+    paddingX: options.paddingX ?? FLOWCHART_PADDING_X,
+    paddingY: options.paddingY ?? FLOWCHART_PADDING_Y,
+    roundedEdges: options.roundedEdges ?? true,
+    gap: options.gap ?? FLOWCHART_GAP,
+    inlineEdgeLabels: options.inlineEdgeLabels ?? false,
+    maxLabelWidth: options.maxLabelWidth ?? null,
+    arrowStyle: options.arrowStyle ?? DEFAULT_ARROW_STYLE,
+    partial: options.partial ?? false,
+    divergences: options.divergences ?? false,
+  };
+}
+
+function renderCanvas(source: string, opts: InternalOptions): Rendered {
+  const {
+    useAscii,
+    paddingX,
+    paddingY,
+    roundedEdges,
+    gap,
+    inlineEdgeLabels,
+    maxLabelWidth,
+    arrowStyle,
+    partial,
+    divergences,
+  } = opts;
+
+  const padX = overridden(paddingX, FLOWCHART_PADDING_X);
+  const padY = overridden(paddingY, FLOWCHART_PADDING_Y);
+  const g = overridden(gap, FLOWCHART_GAP);
+
+  const cs = buildCharset(useAscii, arrowStyle);
+  const raw = partial ? completePartial(source) : source;
+  const prepared = prepareSource(raw);
+  const text = skipDirectives(prepared);
+
+  if (text.startsWith("sequenceDiagram")) {
+    return {
+      canvas: renderSequence(parseSequenceDiagram(text), useAscii, padX, g, cs, maxLabelWidth),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("classDiagram")) {
+    return {
+      canvas: renderClassDiagram(parseClassDiagram(text), useAscii, padX, g, cs),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("erDiagram")) {
+    return {
+      canvas: renderERDiagram(parseERDiagram(text), useAscii, padX, g, cs),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("block")) {
+    return {
+      canvas: renderBlockDiagram(parseBlockDiagram(text), useAscii, padX, g, cs),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("gitGraph")) {
+    return {
+      canvas: renderGitGraph(parseGitGraph(prepared), useAscii, cs),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("gantt")) {
+    return {
+      canvas: renderGantt(parseGantt(text), useAscii),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("pie")) {
+    return {
+      canvas: renderPieChart(parsePieChart(text), useAscii),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("treemap")) {
+    return {
+      canvas: renderTreemap(parseTreemap(text), useAscii, cs),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("mindmap")) {
+    return {
+      canvas: renderMindmap(parseMindmap(text, divergences), useAscii, roundedEdges),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("packet")) {
+    return {
+      canvas: renderPacket(parsePacket(text), useAscii, roundedEdges, padY),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("xychart")) {
+    return {
+      canvas: renderXYChart(parseXYChart(text), useAscii, roundedEdges),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("journey")) {
+    return {
+      canvas: renderJourney(parseJourney(text), useAscii, padX, g, roundedEdges, cs),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("timeline")) {
+    return {
+      canvas: renderTimeline(parseTimeline(text), useAscii, cs),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("kanban")) {
+    return {
+      canvas: renderKanban(parseKanban(text), useAscii, padX, g, cs),
+      graph: null,
+    };
+  }
+
+  if (text.startsWith("quadrantChart")) {
+    return {
+      canvas: renderQuadrant(parseQuadrant(text), useAscii, divergences),
+      graph: null,
+    };
+  }
+
+  let graph: Graph;
+  let effectiveInline = inlineEdgeLabels;
+  if (text.startsWith("architecture")) {
+    graph = parseArchitecture(text);
+    effectiveInline = false;
+  } else if (text.startsWith(STATE_DIAGRAM)) {
+    graph = parseStateDiagram(text);
+  } else {
+    graph = parseFlowchart(text);
+  }
+
+  const canvas = renderGraphCanvas(graph, {
+    cs,
+    useAscii,
+    paddingX,
+    paddingY,
+    roundedEdges,
+    gap,
+    inlineEdgeLabels: effectiveInline,
+    maxLabelWidth,
+    divergences,
+  });
+  return { canvas, graph };
+}
+
+function maybeFit<T>(
+  produce: (opts: InternalOptions) => T,
+  plain: (result: T) => string,
+  base: InternalOptions,
   width: number | undefined
 ): T {
-  // The parse is repeated per attempt on purpose: sizing WRITES the wrapped label back onto the node.
-  let result = produce(options);
-  if (width === undefined || widestLine(plainOf(result)) <= width) return result;
-
-  const gap = options.gap ?? FLOWCHART_GAP;
-  const paddingX = options.paddingX ?? FLOWCHART_PADDING_X;
-  for (const step of COMPACT_STEPS) {
-    const stepGap = step.gap ?? gap;
-    const stepPaddingX = step.paddingX ?? paddingX;
-    if (stepGap >= gap && stepPaddingX >= paddingX) continue;
-    result = produce({ ...options, gap: Math.min(stepGap, gap), paddingX: stepPaddingX });
-    if (widestLine(plainOf(result)) <= width) return result;
-  }
-  return result;
+  const initial = produce(base);
+  if (width === undefined) return initial;
+  return fitToWidth(
+    (overrides) =>
+      produce({
+        ...base,
+        gap: overrides.gap ?? base.gap,
+        paddingX: overrides.paddingX ?? base.paddingX,
+        maxLabelWidth: overrides.maxLabelWidth ?? base.maxLabelWidth,
+      }),
+    initial,
+    width,
+    { gap: base.gap, paddingX: base.paddingX, plain }
+  );
 }
 
-/** The drawing a terminal shows. A `width` compacts the layout until it fits, the way the reference's CLI does. */
+/** Render mermaid syntax as Unicode (or ASCII) art. */
 export function render(source: string, options: Options = {}): string {
-  const { width, background: _background, ...renderOptions } = options;
-  return fitted((o) => drawn(source, o), (result) => result, renderOptions, width);
+  const base = resolveOptions(options);
+  return maybeFit(
+    (opts) => {
+      const { canvas } = renderCanvas(source, opts);
+      return canvas !== null ? canvas.toString() : "";
+    },
+    (result) => result,
+    base,
+    options.width
+  );
 }
 
-const DEFAULT_THEME = "default";
-
-/**
- * The same drawing, painted by a theme. What comes back is the text with its colours ON, and NOT yet folded to a
- * console's width: folding is what a console does to a text, and `cli.ts` is where the reference does it.
- */
+/** Render mermaid syntax as a themed `Text` object (before console folding). */
 export function renderThemedText(source: string, options: Options = {}, theme: string = DEFAULT_THEME): Text {
-  const { width, background: _background, ...renderOptions } = options;
-  return fitted((o) => painted(source, o, theme), (result) => result.plain, renderOptions, width);
+  const base = resolveOptions(options);
+  return maybeFit(
+    (opts) => {
+      const rendered = renderCanvas(source, opts);
+      if (rendered.graph !== null) {
+        return renderGraphRich(rendered.canvas, rendered.graph, theme);
+      }
+      return renderSequenceRich(rendered.canvas, theme);
+    },
+    (result) => result.plain,
+    base,
+    options.width
+  );
 }
 
-/** The same drawing, painted by a theme, as the bytes a terminal reads. */
+/** Render mermaid syntax painted by a theme as ANSI terminal text. */
 export function renderThemed(source: string, options: Options = {}, theme: string = DEFAULT_THEME): string {
   return renderThemedText(source, options, theme).toAnsi(options.background);
+}
+
+const plainStyled = (doc: StyledDocument): string =>
+  doc.lines.map((line) => line.map((chunk) => chunk.text).join("")).join("\n");
+
+/** Render mermaid syntax as theme-independent styled chunks (`{ version: 1, lines }`). */
+export function renderStyled(source: string, options: RenderStyledOptions = {}): StyledDocument {
+  const base = resolveOptions(options);
+  return maybeFit(
+    (opts) => serializeCanvas(renderCanvas(source, opts).canvas),
+    plainStyled,
+    base,
+    options.width
+  );
 }

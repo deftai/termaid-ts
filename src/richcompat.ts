@@ -369,6 +369,30 @@ export class Text {
     return renderCells(this.cells, background);
   }
 
+  /** Prefix every line with unstyled `prefix` cells (used for indented Markdown fences). */
+  withPrefix(prefix: string): Text {
+    const prefixCells: Cell[] = [...stripControlCodes(prefix)].map((ch) => ({ ch, style: NO_CELL_STYLE }));
+    const lines = splitCells(this.cells);
+    const out: Cell[] = [];
+    lines.forEach((line, i) => {
+      if (i > 0) out.push({ ch: LINE_BREAK, style: NO_CELL_STYLE });
+      out.push(...prefixCells, ...line);
+    });
+    const result = new Text("");
+    result.cells.push(...out);
+    return result;
+  }
+
+  /** Join multiple `Text` instances with `\n` separators, preserving cell styles. */
+  static joinLines(parts: readonly Text[]): Text {
+    const result = new Text("");
+    parts.forEach((part, i) => {
+      if (i > 0) result.cells.push({ ch: LINE_BREAK, style: NO_CELL_STYLE });
+      result.cells.push(...part.cells);
+    });
+    return result;
+  }
+
   /** Rich's `Text.wrap` at the given width, each source line broken into the pieces that fit. */
   wrap(width: number, fold: boolean = true): Cell[][] {
     const out: Cell[][] = [];

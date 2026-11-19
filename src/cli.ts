@@ -1,26 +1,35 @@
 // Ported from src/termaid/cli.py.
 //
-// Two things here have no Python to be faithful to. `argparse` is the standard library, so its parsing is rebuilt for
-// exactly the flags below and its diagnostics are written in its shape, not copied word for word. And `--tui` opens a
-// Textual app, which is a Python TUI framework: the flag is kept so the surface is the same, and it says what it is.
+// `--tui` (Textual) and `--claude-hook` (Claude Code MessageDisplay hook) are not ported; both flags are accepted so
+// the CLI surface matches the reference and report clearly that they are not part of the TypeScript port.
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Diagnostic, type DiagnosticSeverity } from "./diagnostics.ts";
 import { jsonToMermaid } from "./ingest.ts";
-import { parse, render, renderThemedText, type Options } from "./index.ts";
+import {
+  ARROW_STYLES,
+  parse,
+  prepareSource,
+  render,
+  renderStyled,
+  renderThemedText,
+  skipDirectives,
+  splitMarkdown,
+  type Options,
+  type StyledDocument,
+} from "./index.ts";
 import { printToConsole, Text } from "./richcompat.ts";
-import { ljust, pyStrip } from "./pycompat.ts";
-import { displayWidth } from "./utils.ts";
+import { ljust, pyStrip, rstrip } from "./pycompat.ts";
+import { displayWidth, maxLineWidth } from "./utils.ts";
 
 const PROGRAM = "termaid";
 const NEWLINE = "\n";
 const OK = 0;
 const FAILED = 1;
-/** What a command line a parser cannot read exits with, which is argparse's own code. */
 const MISUSED = 2;
 
-/** The width a console falls back to when nothing on either end of the pipe says otherwise. */
 const FALLBACK_WIDTH = 80;
 
 const THEME_NAMES = [
@@ -37,6 +46,9 @@ const THEME_NAMES = [
   "solarized",
 ] as const;
 
+const ARROW_STYLE_NAMES = ["pointer", "triangle", "outline"] as const;
+const FORMAT_NAMES = ["text", "styled-json"] as const;
+const DIAGNOSTIC_FORMATS = ["text", "json"] as const;
 const JSON_TYPES = ["treemap", "pie", "mindmap", "flowchart", "xychart"] as const;
 
 const DEFAULT_PADDING_X = 4;
@@ -49,15 +61,24 @@ interface Args {
   ascii: boolean;
   paddingX: number;
   paddingY: number;
+  arrowStyle: string;
   gap: number;
   width: number | null;
+  strictWidth: boolean;
+  maxHeight: number | null;
   sharpEdges: boolean;
   theme: string | null;
   tui: boolean;
   noAutoFit: boolean;
+  inlineEdgeLabels: boolean;
+  outputFormat: string;
+  diagnosticsFormat: string;
   output: string | null;
   showIds: boolean;
   json: string | null;
+  markdown: boolean;
+  claudeHook: boolean;
+  arrowStyles: boolean;
   themes: boolean;
   demo: string | null;
 }
@@ -67,22 +88,35 @@ const DEFAULTS: Args = {
   ascii: false,
   paddingX: DEFAULT_PADDING_X,
   paddingY: DEFAULT_PADDING_Y,
+  arrowStyle: "pointer",
   gap: DEFAULT_GAP,
   width: null,
+  strictWidth: false,
+  maxHeight: null,
   sharpEdges: false,
   theme: null,
   tui: false,
   noAutoFit: false,
+  inlineEdgeLabels: false,
+  outputFormat: "text",
+  diagnosticsFormat: "text",
   output: null,
   showIds: false,
   json: null,
+  markdown: false,
+  claudeHook: false,
+  arrowStyles: false,
   themes: false,
   demo: null,
 };
 
 const HELP = `usage: ${PROGRAM} [-h] [--ascii] [--padding-x PADDING_X] [--padding-y PADDING_Y]
-               [--gap GAP] [--width WIDTH] [--sharp-edges] [--theme THEME]
-               [--tui] [--no-auto-fit] [-o FILE] [--show-ids] [--json TYPE]
+               [--arrow-style {pointer,triangle,outline}] [--gap GAP]
+               [--width WIDTH] [--strict-width] [--max-height ROWS]
+               [--sharp-edges] [--theme THEME] [--tui] [--no-auto-fit]
+               [--inline-edge-labels] [--format {text,styled-json}]
+               [--diagnostics-format {text,json}] [-o FILE] [--show-ids]
+               [--json TYPE] [--markdown] [--claude-hook] [--arrow-styles]
                [--themes] [--demo [TYPE]] [--version]
                [file]
 
@@ -98,16 +132,28 @@ options:
                         Horizontal padding inside node boxes (default: 4)
   --padding-y PADDING_Y
                         Vertical padding inside node boxes (default: 2)
+  --arrow-style {pointer,triangle,outline}
+                        Arrowheads: pointer (default, ► ◄ ▼ ▲), triangle (▶ ◀ ▼ ▲) or outline (▷ ◁ ▽ △). See --arrow-styles
   --gap GAP             Space between nodes (default: 4). Use 1 or 2 for compact diagrams.
-  --width WIDTH         Max output width. Re-renders with smaller gap/padding if exceeded.
+  --width WIDTH         Max output width. Re-renders with smaller gap/padding, then wraps labels, if exceeded.
+  --strict-width        Exit with status 2 instead of a warning when the output is still wider than --width.
+  --max-height ROWS     Exit with status 2 when the output has more than ROWS lines.
   --sharp-edges         Use sharp corners on edge turns instead of rounded
   --theme THEME         Color theme.
-  --tui                 Launch interactive TUI viewer.
+  --tui                 Launch interactive TUI viewer (not part of the TypeScript port).
   --no-auto-fit         Disable automatic compaction when diagram exceeds terminal width
+  --inline-edge-labels  Attach labels directly to their edges
+  --format {text,styled-json}
+                        Output format. styled-json prints one JSON document of text chunks tagged with style keys.
+  --diagnostics-format {text,json}
+                        Print errors and warnings on stderr as text or as JSON lines.
   -o FILE, --output FILE
                         Write output to file instead of stdout
   --show-ids            Show node IDs alongside labels (e.g. 'A: Start') for debugging.
   --json TYPE           Read JSON/tabular data from stdin and render as TYPE.
+  --markdown            Read a Markdown document and render each \`\`\`mermaid block in place.
+  --claude-hook         Run as a Claude Code MessageDisplay hook (not part of the TypeScript port).
+  --arrow-styles        List available arrowhead styles and exit.
   --themes              List available color themes and exit.
   --demo [TYPE]         Render sample diagrams. Use 'all' or a type name (flowchart, sequence, etc.).
   --version             show program's version number and exit`;
@@ -119,7 +165,6 @@ const err = (line: string): void => {
   process.stderr.write(line + NEWLINE);
 };
 
-/** The package's own version, which is where the reference reads its metadata. */
 function version(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
   for (const candidate of [path.join(here, "..", "package.json"), path.join(here, "..", "..", "package.json")]) {
@@ -129,10 +174,9 @@ function version(): string {
       continue;
     }
   }
-  return "0.0.0";
+  return "0.12.0";
 }
 
-/** Thrown where argparse would print a usage line and stop. */
 class UsageError extends Error {}
 
 const asInteger = (flag: string, text: string): number => {
@@ -142,17 +186,41 @@ const asInteger = (flag: string, text: string): number => {
 
 const asChoice = (flag: string, text: string, choices: readonly string[]): string => {
   if (!choices.includes(text)) {
-    throw new UsageError(`argument ${flag}: invalid choice: '${text}' (choose from ${choices.map((c) => `'${c}'`).join(", ")})`);
+    throw new UsageError(
+      `argument ${flag}: invalid choice: '${text}' (choose from ${choices.map((c) => `'${c}'`).join(", ")})`
+    );
   }
   return text;
 };
 
-/** What `--flag=value` and `--flag value` both mean, the second reading the argument that follows. */
+function preParseDiagnosticsFormat(argv: readonly string[]): string {
+  let fmt = "text";
+  for (let i = 0; i < argv.length; i++) {
+    const tok = argv[i] as string;
+    if (tok === "--diagnostics-format" && argv[i + 1] !== undefined) {
+      fmt = argv[i + 1] as string;
+      i += 1;
+    } else if (tok.startsWith("--diagnostics-format=")) {
+      fmt = tok.slice("--diagnostics-format=".length);
+    }
+  }
+  return fmt;
+}
+
+function report(
+  diagnosticsFormat: string,
+  code: string,
+  message: string,
+  options: { exitCode?: number; severity?: DiagnosticSeverity; details?: Record<string, string | number> } = {}
+): number {
+  const diag = new Diagnostic(code, message, options);
+  return diag.emit(diagnosticsFormat, err);
+}
+
 interface Reader {
   next(flag: string, inline: string | undefined): string;
 }
 
-/** The command line, as far as this program's own flags go. */
 export function parseArgs(argv: readonly string[]): Args {
   const args: Args = { ...DEFAULTS };
   let at = 0;
@@ -164,7 +232,6 @@ export function parseArgs(argv: readonly string[]): Args {
       return value;
     },
   };
-  /** An optional argument is taken only when what follows is not itself a flag. */
   const optional = (inline: string | undefined): string | null => {
     if (inline !== undefined) return inline;
     const value = argv[at + 1];
@@ -204,11 +271,20 @@ export function parseArgs(argv: readonly string[]): Args {
       case "--padding-y":
         args.paddingY = asInteger(flag, reader.next(flag, inline));
         break;
+      case "--arrow-style":
+        args.arrowStyle = asChoice(flag, reader.next(flag, inline), ARROW_STYLE_NAMES);
+        break;
       case "--gap":
         args.gap = asInteger(flag, reader.next(flag, inline));
         break;
       case "--width":
         args.width = asInteger(flag, reader.next(flag, inline));
+        break;
+      case "--strict-width":
+        args.strictWidth = true;
+        break;
+      case "--max-height":
+        args.maxHeight = asInteger(flag, reader.next(flag, inline));
         break;
       case "--sharp-edges":
         args.sharpEdges = true;
@@ -222,6 +298,15 @@ export function parseArgs(argv: readonly string[]): Args {
       case "--no-auto-fit":
         args.noAutoFit = true;
         break;
+      case "--inline-edge-labels":
+        args.inlineEdgeLabels = true;
+        break;
+      case "--format":
+        args.outputFormat = asChoice(flag, reader.next(flag, inline), FORMAT_NAMES);
+        break;
+      case "--diagnostics-format":
+        args.diagnosticsFormat = asChoice(flag, reader.next(flag, inline), DIAGNOSTIC_FORMATS);
+        break;
       case "-o":
       case "--output":
         args.output = reader.next(flag, inline);
@@ -231,6 +316,15 @@ export function parseArgs(argv: readonly string[]): Args {
         break;
       case "--json":
         args.json = asChoice(flag, reader.next(flag, inline), JSON_TYPES);
+        break;
+      case "--markdown":
+        args.markdown = true;
+        break;
+      case "--claude-hook":
+        args.claudeHook = true;
+        break;
+      case "--arrow-styles":
+        args.arrowStyles = true;
         break;
       case "--themes":
         args.themes = true;
@@ -246,19 +340,20 @@ export function parseArgs(argv: readonly string[]): Args {
   return args;
 }
 
-const maxLineWidth = (text: string): number => Math.max(0, ...text.split(NEWLINE).map(displayWidth));
+type RenderResult = string | Text | StyledDocument;
 
-/** The plain view of a result, which is what a width is measured on: a painted one carries escapes that take no room. */
-const plainOf = (result: string | Text): string => (typeof result === "string" ? result : result.plain);
+function plainOf(result: RenderResult): string {
+  if (typeof result === "string") return result;
+  if (result instanceof Text) return result.plain;
+  return result.lines.map((line) => line.map((chunk) => chunk.text).join("")).join(NEWLINE);
+}
 
-/** The columns a terminal has, or the fallback nothing contradicts. */
 function terminalWidth(): number {
   const declared = process.env["COLUMNS"];
   if (declared !== undefined && /^\d+$/.test(declared)) return Number.parseInt(declared, 10);
   return process.stdout.columns ?? FALLBACK_WIDTH;
 }
 
-/** The width Rich gives a console: a real terminal's, and 80 where every stream is a pipe. */
 function consoleWidth(): number {
   const declared = process.env["COLUMNS"];
   if (declared !== undefined && /^\d+$/.test(declared)) return Number.parseInt(declared, 10);
@@ -269,50 +364,43 @@ function consoleWidth(): number {
   return FALLBACK_WIDTH;
 }
 
-/**
- * The width a drawing is asked to fit in: the one named on the command line, or the terminal's, and none at all when
- * the output is a pipe or the caller turned the fitting off.
- */
 function targetWidth(args: Args): number | undefined {
   if (args.width !== null) return args.width;
   if (args.noAutoFit || process.stdout.isTTY !== true) return undefined;
   return terminalWidth();
 }
 
-const TOO_WIDE = (actual: number, target: number): string =>
-  `Warning: diagram is ${actual} cols wide but target is ${target}. ` +
-  `Try: less -S, or use 'graph TD' for vertical layout.`;
-
-/** The diagram source, from a file or from what was piped in. */
 function readSource(args: Args): string | null {
   if (args.file !== null) {
     try {
       return fs.readFileSync(args.file, "utf8");
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "ENOENT") err(`Error: File not found: ${args.file}`);
-      else err(`Error reading file: ${(e as Error).message}`);
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+        report(args.diagnosticsFormat, "input_missing", `File not found: ${args.file}`, {
+          details: { path: args.file },
+        });
+      } else {
+        report(args.diagnosticsFormat, "input_missing", `Error reading file: ${(e as Error).message}`, {
+          details: { path: args.file },
+        });
+      }
       return null;
     }
   }
   if (process.stdin.isTTY !== true) return fs.readFileSync(0, "utf8");
-  err("Error: No input provided. Pass a file or pipe input.");
-  err(`Usage: ${PROGRAM} diagram.mmd`);
-  err(`       echo 'graph LR; A-->B' | ${PROGRAM}`);
+  report(
+    args.diagnosticsFormat,
+    "input_missing",
+    `No input provided. Pass a file or pipe input.\nUsage: ${PROGRAM} diagram.mmd\n       echo 'graph LR; A-->B' | ${PROGRAM}`
+  );
   return null;
 }
 
-/** The TERM values Rich reads as a terminal that cannot show a colour, whatever else the environment says. */
 const DUMB_TERMS: ReadonlySet<string> = new Set(["dumb", "unknown"]);
 const NO_COLOR_VAR = "NO_COLOR";
 const FORCE_COLOR_VAR = "FORCE_COLOR";
 const TERM_VAR = "TERM";
 
-/**
- * Rich's own decision, measured against the reference binary rather than read off its source. Three things in order:
- * NO_COLOR beats everything and is answered by its PRESENCE, empty string included; a dumb TERM comes next; and what
- * is left paints on a terminal alone, or where FORCE_COLOR holds something non-empty. FORCE_COLOR's value is never
- * read, so "0" forces just as "1" does, and only "" is the same as unset.
- */
 function consoleShowsColor(env: NodeJS.ProcessEnv = process.env): boolean {
   if (env[NO_COLOR_VAR] !== undefined) return false;
   if (DUMB_TERMS.has(env[TERM_VAR] ?? "")) return false;
@@ -321,13 +409,11 @@ function consoleShowsColor(env: NodeJS.ProcessEnv = process.env): boolean {
   return process.stdout.isTTY === true;
 }
 
-/** A theme paints only where a console would show it: asking for one is not the same as having somewhere to draw it. */
 const useColor = (args: Args): boolean => args.theme !== null && consoleShowsColor();
 
 const QUOTE = '"';
 const SAFE_QUOTE = "'";
 
-/** The source rewritten so each node shows its id beside its label, which only a flowchart can be. */
 function applyShowIds(source: string): string {
   let graph;
   try {
@@ -342,8 +428,7 @@ function applyShowIds(source: string): string {
   }
   if (extra.length === 0) return source;
 
-  // The redefinitions go straight after the header line, where the parser still reads them as node declarations.
-  const lines = source.split(NEWLINE);
+  const lines = skipDirectives(prepareSource(source)).split(NEWLINE);
   return [lines[0] as string, ...extra, ...lines.slice(1)].join(NEWLINE);
 }
 
@@ -359,7 +444,7 @@ const THEME_LIST: ReadonlyArray<readonly [string, string, string]> = [
   ["phosphor", "text", "Green phosphor terminal"],
   ["gruvbox", "solid", "Gruvbox dark palette"],
   ["monokai", "solid", "Monokai dark with pink/green accents"],
-  ["dracula", "solid", "Dracula purple/pink/green palette"],
+  ["dracula", "solid", "Dracula purple/pink/green accents"],
   ["nord", "solid", "Nord muted blue/cyan arctic palette"],
   ["solarized", "solid", "Solarized dark blue/yellow/cyan"],
 ];
@@ -367,6 +452,18 @@ const THEME_LIST: ReadonlyArray<readonly [string, string, string]> = [
 function listThemes(): number {
   for (const [name, kind, description] of THEME_LIST) {
     out(`  ${ljust(name, THEME_NAME_WIDTH)} ${ljust(`[${kind}]`, THEME_KIND_WIDTH)} ${description}`);
+  }
+  return OK;
+}
+
+function listArrowStyles(): number {
+  const descriptions: Readonly<Record<string, string>> = {
+    pointer: "Pointers (default)",
+    triangle: "Solid triangles, matching the up and down arrows",
+    outline: "Open triangles",
+  };
+  for (const [name, [right, left, down, up]] of Object.entries(ARROW_STYLES)) {
+    out(`  ${ljust(name, 10)} ${right} ${left} ${down} ${up}   ${descriptions[name] ?? ""}`);
   }
   return OK;
 }
@@ -455,9 +552,11 @@ function runDemo(args: Args): number {
   if (demoType === ALL) keys = [...DEMO_SOURCES.keys()];
   else if (DEMO_SOURCES.has(demoType)) keys = [demoType];
   else {
-    err(`Unknown demo type: ${demoType}`);
-    err(`Available: all, ${[...DEMO_SOURCES.keys()].join(", ")}`);
-    return FAILED;
+    return report(
+      args.diagnosticsFormat,
+      "invalid_arguments",
+      `Unknown demo type: ${demoType}\nAvailable: all, ${[...DEMO_SOURCES.keys()].join(", ")}`
+    );
   }
 
   const color = useColor(args);
@@ -472,80 +571,240 @@ function runDemo(args: Args): number {
   return OK;
 }
 
-/** What the reference passes on from the command line to a render. */
 const renderOptions = (args: Args): Options => ({
   useAscii: args.ascii,
   paddingX: args.paddingX,
   paddingY: args.paddingY,
   roundedEdges: !args.sharpEdges,
   gap: args.gap,
+  inlineEdgeLabels: args.inlineEdgeLabels,
+  arrowStyle: args.arrowStyle,
 });
 
+function checkOutput(text: string, args: Args): number | null {
+  const width = maxLineWidth(text);
+  const height = text.split(NEWLINE).length;
+  if (args.strictWidth && args.width !== null && width > args.width) {
+    return report(
+      args.diagnosticsFormat,
+      "width_exceeded",
+      `diagram is ${width} cols wide but target is ${args.width}.`,
+      { exitCode: MISUSED, details: { actual_width: width, max_width: args.width } }
+    );
+  }
+  if (args.maxHeight !== null && height > args.maxHeight) {
+    return report(
+      args.diagnosticsFormat,
+      "height_exceeded",
+      `diagram exceeds ${args.maxHeight} output rows.`,
+      { exitCode: MISUSED, details: { actual_height: height, max_height: args.maxHeight } }
+    );
+  }
+  return null;
+}
+
+function renderOne(
+  source: string,
+  args: Args,
+  styled: boolean,
+  color: boolean,
+  target: number | undefined
+): RenderResult {
+  const prepared = args.showIds ? applyShowIds(source) : source;
+  const options: Options = { ...renderOptions(args), ...(target === undefined ? {} : { width: target }) };
+  let result: RenderResult;
+  if (styled) {
+    result = renderStyled(prepared, options);
+  } else if (color) {
+    result = renderThemedText(prepared, options, args.theme ?? "default");
+  } else {
+    result = render(prepared, options);
+  }
+
+  const actualWidth = maxLineWidth(plainOf(result));
+  if (target !== undefined && actualWidth > target && !args.strictWidth) {
+    report(
+      args.diagnosticsFormat,
+      "width_exceeded",
+      `diagram is ${actualWidth} cols wide but target is ${target}. Try: less -S, or use 'graph TD' for vertical layout.`,
+      { exitCode: OK, severity: "warning", details: { actual_width: actualWidth, max_width: target } }
+    );
+  }
+  return result;
+}
+
+function indentResult(result: string | Text, indent: string): string | Text {
+  if (indent === "") return result;
+  if (typeof result === "string") {
+    return result
+      .split(NEWLINE)
+      .map((line) => indent + line)
+      .join(NEWLINE);
+  }
+  return result.withPrefix(indent);
+}
+
+function renderMarkdownDoc(text: string, args: Args, color: boolean): string | Text {
+  const width = targetWidth(args);
+  const pieces: Array<string | Text> = [];
+
+  for (const seg of splitMarkdown(text)) {
+    if (!seg.isMermaid) {
+      pieces.push(seg.text);
+      continue;
+    }
+    const target = width === undefined ? undefined : Math.max(width - displayWidth(seg.indent), 1);
+    let drawn: RenderResult | null = null;
+    let failure: [string, string] | null = null;
+    try {
+      drawn = renderOne(seg.text, args, false, color, target);
+    } catch (e) {
+      failure = ["render_failed", (e as Error).message];
+    }
+    if (failure === null && drawn !== null) {
+      if (pyStrip(plainOf(drawn)) === "") {
+        failure = ["render_empty", "nothing to draw"];
+      } else {
+        pieces.push(indentResult(drawn as string | Text, seg.indent));
+        continue;
+      }
+    }
+    const [code, reason] = failure as [string, string];
+    report(args.diagnosticsFormat, code, `could not render the diagram at line ${seg.line}: ${reason}`, {
+      exitCode: OK,
+      severity: "warning",
+      details: { line: seg.line },
+    });
+    pieces.push(seg.raw);
+  }
+
+  if (!color) {
+    return pieces.map((p) => (typeof p === "string" ? p : p.plain)).join(NEWLINE);
+  }
+  return Text.joinLines(pieces.map((p) => (p instanceof Text ? p : new Text(p))));
+}
+
 export function main(argv: readonly string[]): number {
+  const initialDiagFormat = preParseDiagnosticsFormat(argv);
   let args: Args;
   try {
     args = parseArgs(argv);
   } catch (e) {
     if (!(e instanceof UsageError)) throw e;
+    if (initialDiagFormat === "json") {
+      return report("json", "invalid_arguments", e.message, { exitCode: MISUSED });
+    }
     err(`usage: ${PROGRAM} [-h] ... [file]`);
     err(`${PROGRAM}: error: ${e.message}`);
     return MISUSED;
   }
 
+  const styled = args.outputFormat === "styled-json";
+  if (styled && (args.claudeHook || args.tui || args.markdown)) {
+    return report(
+      args.diagnosticsFormat,
+      "invalid_arguments",
+      "--format styled-json cannot be combined with --claude-hook, --tui or --markdown.",
+      { exitCode: MISUSED }
+    );
+  }
+
+  if (args.claudeHook) {
+    return report(args.diagnosticsFormat, "not_ported", "--claude-hook is not part of the TypeScript port.");
+  }
+
   if (args.themes) return listThemes();
+  if (args.arrowStyles) return listArrowStyles();
   if (args.demo !== null) return runDemo(args);
+
+  if (args.width !== null && args.width < 1) {
+    return report(args.diagnosticsFormat, "invalid_arguments", "--width must be positive.", { exitCode: MISUSED });
+  }
 
   let source = readSource(args);
   if (source === null) return FAILED;
 
-  source = pyStrip(source);
-  if (source === "") {
-    err("Error: Empty input.");
-    return FAILED;
+  source = args.markdown ? rstrip(source) : pyStrip(source);
+  if (pyStrip(source) === "") {
+    return report(args.diagnosticsFormat, "input_empty", "Empty input.");
+  }
+
+  if (args.markdown && (args.json !== null || args.tui)) {
+    return report(args.diagnosticsFormat, "invalid_arguments", "--markdown cannot be combined with --json or --tui.");
+  }
+
+  if (args.strictWidth && args.width === null) {
+    return report(args.diagnosticsFormat, "invalid_arguments", "--strict-width requires --width.", {
+      exitCode: MISUSED,
+    });
+  }
+  if (args.maxHeight !== null && args.maxHeight < 1) {
+    return report(args.diagnosticsFormat, "invalid_arguments", "--max-height must be positive.", {
+      exitCode: MISUSED,
+    });
   }
 
   if (args.json !== null) {
     try {
       source = jsonToMermaid(source, args.json);
     } catch (e) {
-      err(`Error converting JSON to ${args.json}: ${(e as Error).message}`);
-      return FAILED;
+      return report(
+        args.diagnosticsFormat,
+        "input_conversion_failed",
+        `Error converting JSON to ${args.json}: ${(e as Error).message}`
+      );
     }
   }
 
   if (args.tui) {
-    // The reference opens a Textual app here, which is a Python TUI framework with nothing to port it onto.
-    err("Error: --tui is not part of the TypeScript port.");
-    return FAILED;
+    return report(args.diagnosticsFormat, "not_ported", "--tui is not part of the TypeScript port.");
   }
 
-  const renderSource = args.showIds ? applyShowIds(source) : source;
-  const target = targetWidth(args);
-  const options: Options = { ...renderOptions(args), ...(target === undefined ? {} : { width: target }) };
+  const color = !styled && useColor(args);
 
   try {
-    const result: string | Text = useColor(args)
-      ? renderThemedText(renderSource, options, args.theme as string)
-      : render(renderSource, options);
-
-    const actual = maxLineWidth(plainOf(result));
-    if (target !== undefined && actual > target) err(TOO_WIDE(actual, target));
-
-    if (args.output !== null) {
-      try {
-        // A file is written at the drawing's OWN width, so nothing in it is folded that a terminal would not fold.
-        const body =
-          typeof result === "string" ? result + NEWLINE : printToConsole(result, Math.max(actual, FALLBACK_WIDTH));
-        fs.writeFileSync(args.output, body, "utf8");
-      } catch (e) {
-        err(`Error writing to ${args.output}: ${(e as Error).message}`);
-        return FAILED;
+    let result: RenderResult;
+    if (args.markdown) {
+      result = renderMarkdownDoc(source, args, color);
+    } else {
+      result = renderOne(source, args, styled, color, targetWidth(args));
+      if (pyStrip(plainOf(result)) === "") {
+        return report(args.diagnosticsFormat, "render_empty", "Input produced no renderable diagram.");
       }
-    } else if (typeof result === "string") out(result);
-    else process.stdout.write(printToConsole(result, consoleWidth()));
+    }
+
+    const failed = checkOutput(plainOf(result), args);
+    if (failed !== null) return failed;
+
+    if (color && result instanceof Text) {
+      const actual = maxLineWidth(result.plain);
+      if (args.output !== null) {
+        try {
+          fs.writeFileSync(args.output, printToConsole(result, Math.max(actual, FALLBACK_WIDTH)), "utf8");
+        } catch (e) {
+          return report(args.diagnosticsFormat, "output_write_failed", `Error writing to ${args.output}: ${(e as Error).message}`, {
+            details: { path: args.output },
+          });
+        }
+      } else {
+        process.stdout.write(printToConsole(result, consoleWidth()));
+      }
+    } else {
+      const textOut = styled ? JSON.stringify(result) : (result as string);
+      if (args.output !== null) {
+        try {
+          fs.writeFileSync(args.output, textOut + NEWLINE, "utf8");
+        } catch (e) {
+          return report(args.diagnosticsFormat, "output_write_failed", `Error writing to ${args.output}: ${(e as Error).message}`, {
+            details: { path: args.output },
+          });
+        }
+      } else {
+        out(textOut);
+      }
+    }
   } catch (e) {
-    err(`Error rendering diagram: ${(e as Error).message}`);
-    return FAILED;
+    return report(args.diagnosticsFormat, "render_failed", `Error rendering diagram: ${(e as Error).message}`);
   }
 
   return OK;
