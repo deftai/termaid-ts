@@ -108,3 +108,22 @@ All 21 `.mmd` sources previously isolated under `fixtures/divergences/` joined `
   - `partial        : 10434/10434`
 - **`bun run verify`**: `2,582` tests pass, `0` fail (`17,636` `expect()` calls); `ourtakes.ts --check` clean; `verify:node` passes under Node `v25.2.1`.
 - **`bun run differential`**: `9,296/9,296` identical (`9,264` live renders + `33` CLI cases; `1` CPython hash-seed nondeterministic case `architecture-junction [ascii@80]`; `4` malformed sources refused on both sides; `0` allowance entries; `0` divergences).
+
+## Hang guards (inputs the reference cannot draw)
+
+Four inputs loop forever or exhaust memory in the pinned reference and in this port alike, so they have no reference
+drawing, are not in `fixtures/`, and are not sent to the reference by `bun run differential`. They are pinned by
+`tests/hangs.test.ts` instead.
+
+| Input | Cause | Now |
+| --- | --- | --- |
+| `` A["`literal *`"] `` (flowchart markdown label) | the emphasis scanner neither consumed an unmatched `*` nor advanced | the star is literal text, one box (as termaid 0.13.0) |
+| a 1,000-dash edge `A ---...> B & C` beside `X --> Y` | the last-resort route joined two points diagonally and `pathAxes`/`exitsByCell` never reached the end | throws "no axis-aligned path was found" |
+| `xychart-beta` `bar [1000000000000]` | loops ran over every row of a bar trillions of rows tall | clipped to the canvas; non-finite values throw |
+| `packet-beta` `20000000000: "Flag"` | strips were allocated up to the offset | throws past 5000 strips (160,000 bits at 32 a strip) |
+
+Parity is unchanged: `bun run verify` (2582 tests before, 2590 with the 8 new ones) and `bun run compare` (824/824, 824/824, 412/412, 412/412, 10434/10434)
+report the same totals before and after, and no file under `fixtures/expected/` changed. `bun run differential` was not
+run: its corpus derives mutants from fixtures, and a mutant could reach one of these inputs on the live reference.
+The two wrong drawings that match the reference (reversed labels in `flowchart RL`/`BT`, missing continuation rows in
+`packet-beta`) are untouched.

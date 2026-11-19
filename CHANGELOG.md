@@ -6,6 +6,15 @@ release the port reproduces, and the patch counts this package's own additions o
 package's own: an addition with no counterpart in termaid, or a deliberate divergence from it; every other entry ports
 something the upstream did.
 
+## Unreleased
+
+- ◉ Four inputs that made the renderer loop forever or run out of memory now return. The pinned reference does the same
+  on all four, so none has a reference drawing and none is in the parity corpus (`tests/hangs.test.ts` covers them):
+  an unmatched `*` in a markdown flowchart label is kept as literal text (as termaid 0.13.0 does); an edge whose
+  last-resort route would be a diagonal that cannot be walked throws "no axis-aligned path was found"; an `xychart-beta`
+  value far off the chart is clipped to the chart before any loop, and a value that is not finite throws; a `packet-beta`
+  field reaching past 5000 strips (160,000 bits) throws before anything is allocated
+
 ## 0.12.0 (2026-11-18, deftai/termaid 0f2fb37f / 0.12.0)
 
 - Ported all upstream and Deft changes through `deftai/termaid` commit `0f2fb37f5cb65a75a778b298480d2fc2b306f634` (`0.12.0`)

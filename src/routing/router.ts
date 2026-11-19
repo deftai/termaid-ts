@@ -1249,6 +1249,14 @@ function routeSingleEdge(
   } else if (pathAlt !== null) {
     [path, [startDir, endDir]] = [pathAlt, alt];
   } else {
+    // Last resort: a straight two-point path. When the points differ on both axes by different amounts it is a
+    // diagonal that pathAxes and exitsByCell can never walk (they step both coordinates by one and never land on
+    // the end point), so refuse it. The pinned reference loops forever on this input, so no reference drawing exists.
+    const dCol = Math.abs(endPref[0] - startPref[0]);
+    const dRow = Math.abs(endPref[1] - startPref[1]);
+    if (dCol !== 0 && dRow !== 0 && dCol !== dRow) {
+      throw new Error("Cannot route an edge between two nodes: no axis-aligned path was found");
+    }
     path = [startPref, endPref];
     [startDir, endDir] = preferred;
   }

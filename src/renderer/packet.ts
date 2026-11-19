@@ -22,6 +22,12 @@ const CANVAS_SLACK = 4;
 /** Columns a label gives up to the two borders around it. */
 const LABEL_FRAME = 2;
 
+/**
+ * The most strips a packet drawing may have (160,000 bits at 32 bits a strip). Past it the drawing is refused before
+ * anything is allocated: one field at a huge offset would otherwise allocate rows without end.
+ */
+export const MAX_PACKET_STRIPS = 5000;
+
 const STYLE_NODE = "node";
 const STYLE_LABEL = "label";
 const STYLE_NUMBER = "edge_label";
@@ -42,6 +48,15 @@ export function renderPacket(diagram: Packet, useAscii = false, rounded = true, 
     : rounded
       ? ["╭", "╮", "╰", "╯", "┬", "┴"]
       : ["┌", "┐", "└", "┘", "┬", "┴"];
+
+  for (const field of diagram.fields) {
+    const strips = Math.floor(Math.max(field.start, field.end) / rowBits) + 1;
+    if (!(strips <= MAX_PACKET_STRIPS)) {
+      throw new Error(
+        `Packet too large to draw: a field reaches strip ${strips}, and at most ${MAX_PACKET_STRIPS} strips are drawn`,
+      );
+    }
+  }
 
   const rows: Span[][] = [];
   for (const field of diagram.fields) {

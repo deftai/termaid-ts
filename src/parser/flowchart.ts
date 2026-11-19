@@ -212,7 +212,8 @@ export function parseMarkdownLabel(text: string): { plain: string; segments: Lab
         continue;
       }
     }
-    let j = i;
+    // Start one past i: an unmatched "*" at i is kept as literal text instead of producing an empty segment forever.
+    let j = i + 1;
     while (j < md.length && md[j] !== "*") j++;
     rawSegments.push({ text: md.slice(i, j), bold: false, italic: false });
     i = j;

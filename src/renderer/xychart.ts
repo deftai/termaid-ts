@@ -51,6 +51,10 @@ function drawAxisHeader(canvas: Canvas, row: number, marginL: number, label: str
 function measured(diagram: XYChart): { low: number; span: number; points: number } | null {
   const values = diagram.datasets.flatMap((ds) => ds.values);
   if (values.length === 0) return null;
+  // A value that is not a finite number has no place on any axis; the reference fails on it as well.
+  if (!values.every(Number.isFinite) || (diagram.yRange !== null && !diagram.yRange.every(Number.isFinite))) {
+    throw new Error("XY chart values and the y-axis range must be finite numbers");
+  }
 
   let high = Math.max(...values);
   let low = Math.min(0, ...values);
@@ -125,7 +129,8 @@ function renderVertical(diagram: XYChart, useAscii: boolean, rounded: boolean): 
       const bars = heightOf(value);
 
       if (ds.chartType === "bar") {
-        for (let r = 0; r < bars; r++) {
+        // Rows above the canvas are never drawn, so a bar far taller than the chart stops at its top edge.
+        for (let r = 0; r < Math.min(bars, rowOffset + CHART_H); r++) {
           for (let c = 0; c < columnWidth; c++) {
             canvas.put(rowOffset + CHART_H - 1 - r, left + c, barChar, false, sectionStyle(i));
           }
@@ -223,7 +228,8 @@ function renderHorizontal(diagram: XYChart, useAscii: boolean): Canvas {
       canvas.putText(row, Math.max(0, marginLeft - displayWidth(category) - 1), category, STYLE_AXIS_LABEL);
 
       if (ds.chartType === "bar") {
-        for (let c = 0; c < bars; c++) canvas.put(row, marginLeft + 1 + c, barChar, false, sectionStyle(i));
+        // Columns right of the canvas are never drawn, so a bar far longer than the chart stops at its right edge.
+        for (let c = 0; c < Math.min(bars, canvas.width); c++) canvas.put(row, marginLeft + 1 + c, barChar, false, sectionStyle(i));
         return;
       }
 
@@ -269,7 +275,9 @@ function drawLineV(
 
   for (let x = x1 + 1; x < middle; x++) canvas.put(y1, x, horizontal, false, STYLE_EDGE);
   canvas.put(y1, middle, (up ? bottomRight : topRight) as string, false, STYLE_EDGE);
-  for (let r = Math.min(y1, y2) + 1; r < Math.max(y1, y2); r++) canvas.put(r, middle, vertical, false, STYLE_EDGE);
+  for (let r = Math.max(Math.min(y1, y2) + 1, 0); r < Math.min(Math.max(y1, y2), canvas.height); r++) {
+    canvas.put(r, middle, vertical, false, STYLE_EDGE);
+  }
   canvas.put(y2, middle, (up ? topLeft : bottomLeft) as string, false, STYLE_EDGE);
   for (let x = middle + 1; x < x2; x++) canvas.put(y2, x, horizontal, false, STYLE_EDGE);
 }
@@ -299,7 +307,7 @@ function drawLineH(
 
   for (let r = y1 + 1; r < midY; r++) canvas.put(r, x1, vertical, false, STYLE_EDGE);
   canvas.put(midY, x1, (goingRight ? bottomLeft : bottomRight) as string, false, STYLE_EDGE);
-  for (let c = Math.min(x1, x2) + 1; c < Math.max(x1, x2); c++) canvas.put(midY, c, horizontal, false, STYLE_EDGE);
+  for (let c = Math.max(Math.min(x1, x2) + 1, 0); c < Math.min(Math.max(x1, x2), canvas.width); c++) canvas.put(midY, c, horizontal, false, STYLE_EDGE);
   canvas.put(midY, x2, (goingRight ? topRight : topLeft) as string, false, STYLE_EDGE);
   for (let r = midY + 1; r < y2; r++) canvas.put(r, x2, vertical, false, STYLE_EDGE);
 }
