@@ -46,8 +46,10 @@ process.stdout.write(printToConsole(renderThemedText(source, { width: 80 }, "neo
 ```
 
 `render` and `renderThemedText` take the same `Options` the command line exposes: `width`, `useAscii`, `paddingX`,
-`paddingY`, `roundedEdges`, `gap`. Every parser and every renderer is exported by name too, for a caller that wants one
-diagram kind without the dispatcher.
+`paddingY`, `roundedEdges`, `gap`, `inlineEdgeLabels`, `maxLabelWidth`, `arrowStyle`, `partial`, `divergences`.
+`renderStyled(source, options)` returns theme-independent styled chunks (`{ version: 1, lines }`), and
+`renderStyledParameters()` lists the Python `render_styled` parameter names in signature order. Every parser and every
+renderer is exported by name too, for a caller that wants one diagram kind without the dispatcher.
 
 `renderThemedText` returns a `Text`, not a string: a painted drawing is a grid of styled cells, and folding it to a
 width is the console's job rather than the library's. `renderThemed` is the shortcut that paints and stringifies in one
@@ -88,21 +90,21 @@ Three checks, and none of them trusts the other two.
 | --- | --- |
 | `bun run compare` | the port against takes of the reference frozen under `fixtures/expected/` |
 | `bun run differential` | the port against the LIVE reference, on a deliberately hostile corpus of mutated sources |
-| `bun run verify` | the typecheck, the suite, and the takes this port answers for alone |
+| `bun run verify` | the typecheck, the suite, the takes this port answers for alone, and Node type-stripping parity (`verify:node`) |
 
 The frozen takes say what the reference drew the day the oracle ran, so a version bump invalidates all of them at once:
 `bun run oracle` writes them again. The differential harness is the one that catches what frozen takes cannot, since it
 feeds both sides truncated lines, unclosed delimiters, empty labels and arrows inside labels, and a port has to be wrong
 in exactly the same way as the reference.
 
-A handful of drawings this port answers for ALONE, where the reference loses something its author wrote, sit under
-`fixtures/divergences/` with takes written by `bun run ourtakes`. They are kept out of `fixtures/` on purpose: the
-parity corpus feeds the mutants, so a divergence held there would spread across a whole family of them. Each one is
-argued in [CHANGELOG.md](CHANGELOG.md) under a ◉ and named in the differential's own allowance list.
+By default (`divergences: false`), the port reproduces the Python reference byte for byte. A handful of optional
+drawings this port answers for ALONE when `divergences: true` sit under `fixtures/divergences/` with takes written by
+`bun run ourtakes`. Each one is argued in [CHANGELOG.md](CHANGELOG.md) under a ◉.
 
-The reference is the Python termaid itself, pinned and fetched from PyPI by [uv](https://docs.astral.sh/uv/):
-`scripts/reference.ts` names the version, and the two harnesses that spawn it need `uvx` on the machine. Nothing here
-is a dependency of the package, so installing it costs a consumer nothing.
+The reference is the Python termaid pinned in `scripts/reference.ts` (`deftai/termaid` commit
+`0f2fb37f5cb65a75a778b298480d2fc2b306f634`, `0.12.0`) and fetched by [uv](https://docs.astral.sh/uv/): the two
+harnesses that spawn it need `uvx` on the machine. Nothing here is a dependency of the package, so installing it costs a
+consumer nothing.
 
 ## What this is a port of
 
@@ -119,10 +121,10 @@ CPython semantics the port leans on (banker's rounding, `%g`, `str.center`, code
 holds the slice of Rich it depends on, down to Rich emitting one SGR sequence per character.
 
 **Parity is the specification, not an aspiration.** The reference's own bytes are the only verdict: what
-`termaid 0.8.0` draws is frozen under `fixtures/expected/`, and a fixture counts only once the port renders the same
-bytes. The version number tracks the reference it answers to: the major.minor names the termaid release the port
-reproduces, the patch counts this package's own additions on top of it, and [CHANGELOG.md](CHANGELOG.md) records those
-additions release by release. The upstream's own history stays upstream; that file is this repo's alone.
+`deftai/termaid` `0f2fb37f` (`0.12.0`) draws is frozen under `fixtures/expected/`, and a fixture counts only once the
+port renders the same bytes. The version number tracks the reference it answers to: the major.minor names the termaid
+release the port reproduces, the patch counts this package's own additions on top of it, and [CHANGELOG.md](CHANGELOG.md)
+records those additions release by release. The upstream's own history stays upstream; that file is this repo's alone.
 
 **It is verified against the live reference, not only against frozen output.** Frozen takes say what it drew on
 one day, for sources someone chose. The differential harness runs both implementations side by side on a hostile
@@ -134,4 +136,5 @@ copyright notice; the name says what it is a port of, nothing more. See [NOTICE.
 
 ### What is not ported
 
-`--tui`, the Textual interface, which has no equivalent here. The command reports that and exits.
+`--tui` (the Textual interface) and `--claude-hook` (the Claude Code MessageDisplay hook), which have no equivalent
+here. Both flags report that they are not part of the TypeScript port and exit.

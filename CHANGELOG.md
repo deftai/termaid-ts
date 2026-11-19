@@ -6,6 +6,21 @@ release the port reproduces, and the patch counts this package's own additions o
 package's own: an addition with no counterpart in termaid, or a deliberate divergence from it; every other entry ports
 something the upstream did.
 
+## 0.12.0 (2026-11-18, deftai/termaid 0f2fb37f / 0.12.0)
+
+- Ported all upstream and Deft changes through `deftai/termaid` commit `0f2fb37f5cb65a75a778b298480d2fc2b306f634` (`0.12.0`)
+- Added `renderStyled(source, options)` and `renderStyledParameters()` for theme-independent styled-chunk rendering
+- Added `partial: true` streaming completion (`completePartial`), `arrowStyle` (`pointer`, `triangle`, `outline`),
+  `inlineEdgeLabels`, `maxLabelWidth` wrapping, `splitMarkdown`, and structured `Diagnostic` output (`--format styled-json`,
+  `--diagnostics-format json`, `--markdown`, `--strict-width`, `--max-height`)
+- Ported bus-trunk edge routing, iterative crowded-gap expansion (`layoutAndRoute`), multi-line `<br>` labels,
+  `classDef color:` text colouring, class/ER relationship gap tracks, sequence frame sizing & wrapping, sub-day/millisecond
+  `gantt` scales, HTML entity decoding, and leading directive skipping
+- ◉ Added `divergences?: boolean` (default `false`) so default rendering matches the Python reference byte for byte;
+  retired the BOM, inline `pie` header title, and `xychart-beta` y-axis divergences now fixed upstream
+- Made the TypeScript source loadable directly under Node type stripping (`.ts` import specifiers, `erasableSyntaxOnly`,
+  `verbatimModuleSyntax`, `verify:node`) with zero runtime APIs in library modules
+
 ## 0.8.3 (2026-08-18)
 
 - ◉ A `pie` title written on the header line is read, where the reference drops it and leaves the chart untitled

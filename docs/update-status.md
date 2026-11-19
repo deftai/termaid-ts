@@ -34,15 +34,6 @@ Node runtime checked: `v25.2.1` (Bun `1.3.4`).
 | `xychart` | 10 | 0 | 10 | 0 | 20 | 0 |
 | **Total** | **155** | **57** | **145** | **67** | **300** | **124** |
 
-### Raw Baseline `compare` Output
-
-```
-plain : 155/212
-  echecs : architecture-basic@40 block-shapes@40 block-shapes@80 class-basic@40 class-basic@80 crossing@40 crossing@80 emoji@40 er-attributes@40 fan@40 fan@80 gallery-architecture-nested-groups@40 gallery-architecture-service-group@40 gallery-class-basic-class@40 gallery-class-basic-class@80 gallery-class-mvc-pattern@40 gallery-class-mvc-pattern@80 gallery-class-relationship-types@40 gallery-er-all-cardinality-types@40 gallery-er-all-cardinality-types@80 gallery-er-basic-relationships@40 gallery-er-basic-relationships@80 gallery-er-e-commerce-schema@40 gallery-er-e-commerce-schema@80 gallery-flowchart-system-architecture@40 gallery-flowchart-system-architecture@80 gallery-git-basic@40 gallery-git-basic@80 gallery-git-feature-branches@40 gallery-git-feature-branches@80 gallery-sequence-basic-messages@40 gallery-sequence-notes@40 gallery-sequence-oauth-2-0-flow@40 gallery-treemap-basic@40 gallery-treemap-basic@80 long-labels@40 pie-basic@40 pie-basic@80 pie-showdata@40 pie-showdata@80 pie-untitled@40 pie-untitled@80 seq-basic@40 seq-basic@80 seq-blocks@40 seq-blocks@80 seq-kinds@40 seq-kinds@80 shapes@40 shapes@80 state-composite@40 state-composite@80 subgraph-lr@40 subgraph-overlap@40 subgraph-overlap@80 treemap-basic@40 treemap-basic@80
-neon  : 145/212
-  echecs : architecture-basic@40 architecture-flat@40 architecture-junction@40 block-shapes@40 block-shapes@80 class-basic@40 class-basic@80 crossing@40 crossing@80 emoji@40 er-attributes@40 fan@40 fan@80 gallery-architecture-nested-groups@40 gallery-architecture-service-group@40 gallery-class-basic-class@40 gallery-class-basic-class@80 gallery-class-mvc-pattern@40 gallery-class-mvc-pattern@80 gallery-class-relationship-types@40 gallery-er-all-cardinality-types@40 gallery-er-all-cardinality-types@80 gallery-er-basic-relationships@40 gallery-er-basic-relationships@80 gallery-er-e-commerce-schema@40 gallery-er-e-commerce-schema@80 gallery-flowchart-system-architecture@40 gallery-flowchart-system-architecture@80 gallery-git-basic@40 gallery-git-basic@80 gallery-git-feature-branches@40 gallery-git-feature-branches@80 gallery-journey-basic@40 gallery-journey-basic@80 gallery-journey-onboarding-flow@40 gallery-journey-onboarding-flow@80 gallery-sequence-basic-messages@40 gallery-sequence-notes@40 gallery-sequence-oauth-2-0-flow@40 gallery-treemap-basic@40 gallery-treemap-basic@80 journey-bare@40 journey-bare@80 journey-basic@40 journey-basic@80 long-labels@40 pie-basic@40 pie-basic@80 pie-showdata@40 pie-showdata@80 pie-untitled@40 pie-untitled@80 seq-basic@40 seq-basic@80 seq-blocks@40 seq-blocks@80 seq-kinds@40 seq-kinds@80 shapes@40 shapes@80 state-composite@40 state-composite@80 subgraph-lr@40 subgraph-overlap@40 subgraph-overlap@80 treemap-basic@40 treemap-basic@80
-```
-
 ## Step 2: Divergences (`divergences?: boolean`, default `false`)
 
 All 21 `.mmd` sources previously isolated under `fixtures/divergences/` joined `fixtures/` (508 total takes = 127 fixtures × 2 widths × 2 modes).
@@ -59,49 +50,61 @@ All 21 `.mmd` sources previously isolated under `fixtures/divergences/` joined `
 
 ## 46-File Python Diff Checklist (`v0.8.0..0f2fb37f`)
 
-- [ ] `src/termaid/utils.py`
-- [ ] `src/termaid/graph/model.py`
-- [ ] `src/termaid/model/gantt.py`
-- [ ] `src/termaid/model/gitgraph.py`
-- [ ] `src/termaid/renderer/charset.py`
-- [ ] `src/termaid/renderer/canvas.py`
-- [ ] `src/termaid/renderer/shapes/__init__.py`
-- [ ] `src/termaid/diagnostics.py` (new)
-- [ ] `src/termaid/output/__init__.py`
-- [ ] `src/termaid/output/styled.py` (new)
-- [ ] `src/termaid/output/text.py` (deleted)
-- [ ] `src/termaid/output/rich.py`
-- [ ] `src/termaid/output/widget.py` (not ported: Textual TUI widget)
-- [ ] `src/termaid/parser/flowchart.py`
-- [ ] `src/termaid/parser/gantt.py`
-- [ ] `src/termaid/parser/statediagram.py`
-- [ ] `src/termaid/parser/gitgraph.py`
-- [ ] `src/termaid/parser/blockdiagram.py`
-- [x] `src/termaid/parser/piechart.py`
-- [ ] `src/termaid/parser/erdiagram.py`
-- [ ] `src/termaid/parser/sequence.py`
-- [ ] `src/termaid/layout/layers.py`
-- [ ] `src/termaid/layout/grid.py`
-- [ ] `src/termaid/layout/subgraphs.py`
-- [ ] `src/termaid/layout/placement.py`
-- [ ] `src/termaid/routing/pathfinder.py`
-- [ ] `src/termaid/routing/router.py`
-- [ ] `src/termaid/renderer/draw.py`
-- [ ] `src/termaid/renderer/relation_tracks.py` (new)
-- [ ] `src/termaid/renderer/sequence.py`
-- [ ] `src/termaid/renderer/classdiagram.py`
-- [ ] `src/termaid/renderer/erdiagram.py`
-- [ ] `src/termaid/renderer/gantt.py`
-- [x] `src/termaid/renderer/xychart.py`
-- [ ] `src/termaid/renderer/piechart.py`
-- [ ] `src/termaid/renderer/gitgraph.py`
-- [ ] `src/termaid/renderer/blockdiagram.py`
-- [ ] `src/termaid/renderer/journey.py`
-- [ ] `src/termaid/renderer/kanban.py`
-- [ ] `src/termaid/renderer/timeline.py`
-- [ ] `src/termaid/renderer/treemap.py`
-- [ ] `src/termaid/partial.py` (new)
-- [ ] `src/termaid/__init__.py`
-- [ ] `src/termaid/markdown.py` (new)
-- [ ] `src/termaid/cli.py`
-- [ ] `src/termaid/claude_hook.py` (new — unported, CLI reports not ported and exits)
+- [x] `src/termaid/utils.py` → `src/utils.ts`
+- [x] `src/termaid/graph/model.py` → `src/graph/model.ts`
+- [x] `src/termaid/model/gantt.py` → `src/model/gantt.ts` + `src/pydate.ts`
+- [x] `src/termaid/model/gitgraph.py` → `src/model/gitgraph.ts`
+- [x] `src/termaid/renderer/charset.py` → `src/renderer/charset.ts`
+- [x] `src/termaid/renderer/canvas.py` → `src/renderer/canvas.ts`
+- [x] `src/termaid/renderer/shapes/__init__.py` → `src/renderer/shapes.ts`
+- [x] `src/termaid/diagnostics.py` (new) → `src/diagnostics.ts`
+- [x] `src/termaid/output/__init__.py` → `src/index.ts`
+- [x] `src/termaid/output/styled.py` (new) → `src/output/styled.ts`
+- [x] `src/termaid/output/text.py` (deleted) → deleted `src/output/text.ts`
+- [x] `src/termaid/output/rich.py` → `src/output/rich.ts`
+- [x] `src/termaid/output/widget.py` (not ported: Textual TUI widget)
+- [x] `src/termaid/parser/flowchart.py` → `src/parser/flowchart.ts` + `src/data/htmlentities.ts`
+- [x] `src/termaid/parser/gantt.py` → `src/parser/gantt.ts`
+- [x] `src/termaid/parser/statediagram.py` → `src/parser/statediagram.ts`
+- [x] `src/termaid/parser/gitgraph.py` → `src/parser/gitgraph.ts`
+- [x] `src/termaid/parser/blockdiagram.py` → `src/parser/blockdiagram.ts`
+- [x] `src/termaid/parser/piechart.py` → `src/parser/piechart.ts`
+- [x] `src/termaid/parser/erdiagram.py` → `src/parser/erdiagram.ts`
+- [x] `src/termaid/parser/sequence.py` → `src/parser/sequence.ts`
+- [x] `src/termaid/layout/layers.py` → `src/layout/layers.ts`
+- [x] `src/termaid/layout/grid.py` → `src/layout/grid.ts`
+- [x] `src/termaid/layout/subgraphs.py` → `src/layout/subgraphs.ts`
+- [x] `src/termaid/layout/placement.py` → `src/layout/placement.ts`
+- [x] `src/termaid/routing/pathfinder.py` → `src/routing/pathfinder.ts`
+- [x] `src/termaid/routing/router.py` → `src/routing/router.ts`
+- [x] `src/termaid/renderer/draw.py` → `src/renderer/draw.ts`
+- [x] `src/termaid/renderer/relation_tracks.py` (new) → `src/renderer/relation_tracks.ts`
+- [x] `src/termaid/renderer/sequence.py` → `src/renderer/sequence.ts`
+- [x] `src/termaid/renderer/classdiagram.py` → `src/renderer/classdiagram.ts`
+- [x] `src/termaid/renderer/erdiagram.py` → `src/renderer/erdiagram.ts`
+- [x] `src/termaid/renderer/gantt.py` → `src/renderer/gantt.ts`
+- [x] `src/termaid/renderer/xychart.py` → `src/renderer/xychart.ts`
+- [x] `src/termaid/renderer/piechart.py` → `src/renderer/piechart.ts`
+- [x] `src/termaid/renderer/gitgraph.py` → `src/renderer/gitgraph.ts`
+- [x] `src/termaid/renderer/blockdiagram.py` → `src/renderer/blockdiagram.ts`
+- [x] `src/termaid/renderer/journey.py` → `src/renderer/journey.ts`
+- [x] `src/termaid/renderer/kanban.py` → `src/renderer/kanban.ts`
+- [x] `src/termaid/renderer/timeline.py` → `src/renderer/timeline.ts`
+- [x] `src/termaid/renderer/treemap.py` → `src/renderer/treemap.ts`
+- [x] `src/termaid/partial.py` (new) → `src/partial.ts`
+- [x] `src/termaid/__init__.py` → `src/index.ts`
+- [x] `src/termaid/markdown.py` (new) → `src/markdown.ts`
+- [x] `src/termaid/cli.py` → `src/cli.ts`
+- [x] `src/termaid/claude_hook.py` (new — unported, CLI reports `--claude-hook` not ported and exits)
+
+## Final Verification Results (Steps 4 & 5)
+
+- **Fixtures corpus**: `412` `.mmd` sources (`127` prior + `276` upstream `tests/fixtures/` additions + `9` Deft feature fixtures). All `412` claimed in `fixtures/claimed.json`; **0 unclaimed**.
+- **`bun run compare` & `node scripts/node-parity.ts` (`verify:node`)**:
+  - `plain          : 824/824`
+  - `neon           : 824/824`
+  - `styled-unicode : 412/412`
+  - `styled-ascii   : 412/412`
+  - `partial        : 10434/10434`
+- **`bun run verify`**: `2,582` tests pass, `0` fail (`17,636` `expect()` calls); `ourtakes.ts --check` clean; `verify:node` passes under Node `v25.2.1`.
+- **`bun run differential`**: `9,296/9,296` identical (`9,264` live renders + `33` CLI cases; `1` CPython hash-seed nondeterministic case `architecture-junction [ascii@80]`; `4` malformed sources refused on both sides; `0` allowance entries; `0` divergences).
