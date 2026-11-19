@@ -72,9 +72,15 @@ export function expandGapsForSubgraphs(graph: Graph, layout: GridLayout, directi
     const borders = symmetricDifference(before, after);
     if (borders === 0) continue;
     const extra = borders * SG_GAP_PER_LEVEL;
-    for (let gap = first + 2; gap <= second - 2; gap++) {
-      if (vertical) layout.rowHeights.set(gap, Math.max(layout.rowHeights.get(gap) ?? UNSIZED_ROW, extra));
-      else layout.colWidths.set(gap, Math.max(layout.colWidths.get(gap) ?? UNSIZED_COL, extra));
+    const gapStart = first + 2;
+    const gapEnd = second - 2;
+    const sizes = new Map<number, number>([
+      [gapStart, Math.floor(extra / 2) + 1],
+      [gapEnd, extra],
+    ]);
+    for (const [gap, size] of sizes) {
+      if (vertical) layout.rowHeights.set(gap, Math.max(layout.rowHeights.get(gap) ?? UNSIZED_ROW, size));
+      else layout.colWidths.set(gap, Math.max(layout.colWidths.get(gap) ?? UNSIZED_COL, size));
     }
   }
 

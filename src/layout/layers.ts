@@ -5,21 +5,21 @@
 
 import { isSelfReference, isVertical, makeEdge, normalized, type Edge, type Graph, type Subgraph } from "../graph/model.ts";
 
-/** A back edge is worth no layer, and an edge with no length named runs one layer. */
 const ONE_LAYER = 1;
-/** How many barycentre passes are worth running, and how many fruitless ones end it. */
 const MAX_PASSES = 8;
 const MAX_FRUITLESS = 4;
 
 /**
- * An edge naming a SUBGRAPH constrains every node of the target under every node of the source, which layering, which
- * only understands node-to-node edges, cannot see. Expanded into one virtual edge per pair, for the layering alone.
+ * Expand subgraph-endpoint edges into member-to-member virtual edges for layer assignment.
  */
 export function expandSubgraphEdges(graph: Graph): Edge[] {
   const members = (sg: Subgraph, into: Set<string>): void => {
     for (const id of sg.nodeIds) into.add(id);
     for (const child of sg.children) members(child, into);
   };
+
+  const order = new Map<string, number>();
+  graph.nodeOrder.forEach((nid, i) => order.set(nid, i));
 
   const virtual: Edge[] = [];
   for (const e of graph.edges) {
@@ -37,15 +37,20 @@ export function expandSubgraphEdges(graph: Graph): Edge[] {
       const sg = graph.findSubgraphById(endpoint);
       if (sg !== null) members(sg, bucket);
     }
-    // An empty subgraph, a self-edge or nested endpoints: the constraint cannot be satisfied, so it is not stated.
     const shared = [...sources].some((s) => targets.has(s));
     if (sources.size === 0 || targets.size === 0 || shared) continue;
-    for (const s of sources) for (const t of targets) virtual.push(makeEdge(s, t, { minLength: e.minLength }));
+
+    const sortedSources = [...sources].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+    const sortedTargets = [...targets].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+    for (const s of sortedSources) {
+      for (const t of sortedTargets) {
+        virtual.push(makeEdge(s, t, { minLength: e.minLength }));
+      }
+    }
   }
   return virtual;
 }
 
-/** Nodes of a subgraph running ACROSS the graph's own direction, which are laid out as one layer. */
 function orthogonalSubgraphNodes(graph: Graph): Array<Set<string>> {
   const graphVertical = isVertical(normalized(graph.direction));
   const result: Array<Set<string>> = [];
@@ -61,14 +66,7 @@ function orthogonalSubgraphNodes(graph: Graph): Array<Set<string>> {
   return result;
 }
 
-/**
- * Two endpoints held as a PAIR, the way `layers.py` keys them (`tuple[str, str]`, lines 72 and 103). Flattening one
- * into a joined string loses the boundary the tuple kept: every separator is a character an id may legally carry,
- * and the id that carries it takes the whole layering down with it.
- */
 type Endpoints = readonly [string, string];
-
-/** What one source owes each of its targets, looked up by the two ends and never by a key made of both. */
 type ByEndpoints<T> = Map<string, Map<string, T>>;
 
 function put<T>(into: ByEndpoints<T>, source: string, target: string, value: T): void {
@@ -77,16 +75,11 @@ function put<T>(into: ByEndpoints<T>, source: string, target: string, value: T):
   else row.set(target, value);
 }
 
-/**
- * A layer per node, the LONGEST path from a root. Only tree edges count, discovered breadth first: a node is found at
- * its shallowest depth, so an edge reaching back up is a back edge and never lengthens anything.
- */
 export function assignLayers(graph: Graph): Map<string, number> {
   const layers = new Map<string, number>();
   const roots = graph.getRoots();
   for (const root of roots) if (!layers.has(root)) layers.set(root, 0);
 
-  // A list and not a set: the walk below adds an edge only for a child it has never visited, so no pair repeats.
   const treeEdges: Endpoints[] = [];
   const visited = new Set<string>();
   const queue: string[] = [];
@@ -108,7 +101,6 @@ export function assignLayers(graph: Graph): Map<string, number> {
     }
   };
   walk();
-  // Whatever the first walk never reached is its own component, and starts its own walk.
   for (const id of graph.nodeOrder) {
     if (visited.has(id)) continue;
     visited.add(id);
@@ -153,7 +145,6 @@ export function assignLayers(graph: Graph): Map<string, number> {
     for (const id of present) layers.set(id, min);
   }
 
-  // Everything else is recomputed from scratch, or a node below the collapsed set keeps the depth it had before it.
   const allOrtho = new Set<string>();
   for (const set of orthoSets) for (const id of set) allOrtho.add(id);
   for (const id of graph.nodeOrder) if (!allOrtho.has(id)) layers.delete(id);
@@ -164,10 +155,6 @@ export function assignLayers(graph: Graph): Map<string, number> {
   return layers;
 }
 
-/**
- * Two subgraphs sharing a layer draw two boxes over one another. Where that happens, each one is given a contiguous
- * range of its own: internal edges fix the nodes inside, cross-boundary edges fix the order between.
- */
 export function separateSubgraphLayers(graph: Graph, layers: Map<string, number>): Map<string, number> {
   if (graph.subgraphs.length === 0) return layers;
 
@@ -190,7 +177,16 @@ export function separateSubgraphLayers(graph: Graph, layers: Map<string, number>
   }
   if (ranges.size < 2) return layers;
 
-  const sgIds = [...ranges.keys()];
+  // Declaration order, so sibling subgraphs stack the way they were written.
+  const sgIds: string[] = [];
+  const collectDeclared = (subs: Subgraph[]): void => {
+    for (const sg of subs) {
+      if (ranges.has(sg.id)) sgIds.push(sg.id);
+      collectDeclared(sg.children);
+    }
+  };
+  collectDeclared(graph.subgraphs);
+
   let overlap = false;
   for (let i = 0; i < sgIds.length && !overlap; i++) {
     for (let j = i + 1; j < sgIds.length; j++) {
@@ -204,15 +200,15 @@ export function separateSubgraphLayers(graph: Graph, layers: Map<string, number>
   }
   if (!overlap) return layers;
 
-  const succs = new Map<string, Set<string>>(sgIds.map((id) => [id, new Set<string>()]));
+  const succs = new Map<string, string[]>(sgIds.map((id) => [id, []]));
   const inDegree = new Map<string, number>(sgIds.map((id) => [id, 0]));
   for (const e of graph.edges) {
     const from = nodeSg.get(e.source);
     const to = nodeSg.get(e.target);
     if (from === undefined || to === undefined || from === to) continue;
     const bucket = succs.get(from);
-    if (bucket === undefined || bucket.has(to)) continue;
-    bucket.add(to);
+    if (bucket === undefined || bucket.includes(to)) continue;
+    bucket.push(to);
     inDegree.set(to, (inDegree.get(to) ?? 0) + 1);
   }
 
@@ -227,21 +223,21 @@ export function separateSubgraphLayers(graph: Graph, layers: Map<string, number>
       if (left === 0) pending.push(succ);
     }
   }
-  // A cycle between subgraphs has no stacking order, so nothing is moved.
   if (topo.length !== sgIds.length) return layers;
 
   const internals = new Map<string, Map<string, number>>();
   const sizes = new Map<string, number>();
   for (const sgId of topo) {
-    const nodes = new Set([...nodeSg].filter(([, id]) => id === sgId).map(([nid]) => nid));
-    const edges = graph.edges.filter((e) => nodes.has(e.source) && nodes.has(e.target) && !isSelfReference(e));
+    const sgNodes = graph.nodeOrder.filter((nid) => nodeSg.get(nid) === sgId);
+    const sgMember = new Set(sgNodes);
+    const edges = graph.edges.filter((e) => sgMember.has(e.source) && sgMember.has(e.target) && !isSelfReference(e));
     const targets = new Set(edges.map((e) => e.target));
-    let roots = [...nodes].filter((id) => !targets.has(id));
-    if (roots.length === 0) roots = [...nodes].slice(0, 1);
+    let roots = sgNodes.filter((id) => !targets.has(id));
+    if (roots.length === 0) roots = sgNodes.slice(0, 1);
 
     const internal = new Map<string, number>(roots.map((id) => [id, 0]));
     let changed = true;
-    for (let i = 0; i < nodes.size * 2 + 1 && changed; i++) {
+    for (let i = 0; i < sgNodes.length * 2 + 1 && changed; i++) {
       changed = false;
       for (const e of edges) {
         const from = internal.get(e.source);
@@ -253,7 +249,7 @@ export function separateSubgraphLayers(graph: Graph, layers: Map<string, number>
         }
       }
     }
-    for (const id of nodes) if (!internal.has(id)) internal.set(id, 0);
+    for (const id of sgNodes) if (!internal.has(id)) internal.set(id, 0);
     internals.set(sgId, internal);
     sizes.set(sgId, internal.size > 0 ? Math.max(...internal.values()) + 1 : 0);
   }
@@ -287,7 +283,6 @@ export function separateSubgraphLayers(graph: Graph, layers: Map<string, number>
   return next;
 }
 
-/** How many pairs of edges cross between adjacent layers. */
 function countCrossings(graph: Graph, layerLists: string[][]): number {
   let total = 0;
   for (let layer = 1; layer < layerLists.length; layer++) {
@@ -310,7 +305,6 @@ function countCrossings(graph: Graph, layerLists: string[][]): number {
   return total;
 }
 
-/** The nodes of every layer, ordered by the barycentre of what points at them. */
 export function orderLayers(graph: Graph, layers: Map<string, number>): string[][] {
   const maxLayer = layers.size > 0 ? Math.max(...layers.values()) : 0;
   let layerLists: string[][] = Array.from({ length: maxLayer + 1 }, () => []);
@@ -337,7 +331,6 @@ export function orderLayers(graph: Graph, layers: Map<string, number>): string[]
           positions.length > 0 ? positions.reduce((a, b) => a + b, 0) / positions.length : nodes.indexOf(id)
         );
       }
-      // A stable sort, the way Python's is: two nodes sharing a barycentre keep the order they had.
       nodes.sort((a, b) => (barycenters.get(a) ?? 0) - (barycenters.get(b) ?? 0));
     }
 
@@ -380,7 +373,6 @@ export function orderLayers(graph: Graph, layers: Map<string, number>): string[]
           if (left === 0) pending.push(succ);
         }
       }
-      // A cycle leaves the topological order short: rewriting then would duplicate some nodes and drop others.
       const positions = layer.map((id, i) => (internal.has(id) ? i : -1)).filter((i) => i !== -1);
       if (topo.length === positions.length) {
         positions.forEach((pos, i) => {
@@ -393,10 +385,27 @@ export function orderLayers(graph: Graph, layers: Map<string, number>): string[]
   return layerLists;
 }
 
-/**
- * How many extra grid cells a gap needs. One edge running diagonally fits in the single gap cell; every other one
- * needs a cell of its own, or the routing lays them over each other.
- */
+/** Fan-out edge groups eligible to share a horizontal/vertical bus lane. */
+export function busEdges(graph: Graph): Map<string, number[]> {
+  const inDegree = new Map<string, number>();
+  for (const e of graph.edges) {
+    inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1);
+  }
+  const bySource = new Map<string, number[]>();
+  graph.edges.forEach((e, i) => {
+    if (e.label === "" && !isSelfReference(e) && inDegree.get(e.target) === 1) {
+      const list = bySource.get(e.source);
+      if (list === undefined) bySource.set(e.source, [i]);
+      else list.push(i);
+    }
+  });
+  const result = new Map<string, number[]>();
+  for (const [src, idxs] of bySource) {
+    if (idxs.length > 1) result.set(src, idxs);
+  }
+  return result;
+}
+
 export function computeGapExpansions(graph: Graph, layerOrder: string[][]): Map<number, number> {
   const nodeLayer = new Map<string, number>();
   const nodePos = new Map<string, number>();
@@ -407,19 +416,30 @@ export function computeGapExpansions(graph: Graph, layerOrder: string[][]): Map<
     });
   });
 
-  const diagonals = new Map<number, number>();
-  for (const edge of graph.edges) {
-    if (isSelfReference(edge)) continue;
-    const from = nodeLayer.get(edge.source);
-    const to = nodeLayer.get(edge.target);
-    if (from === undefined || to === undefined) continue;
-    if ((nodePos.get(edge.source) ?? 0) === (nodePos.get(edge.target) ?? 0)) continue;
-    for (let gap = Math.min(from, to); gap < Math.max(from, to); gap++) {
-      diagonals.set(gap, (diagonals.get(gap) ?? 0) + 1);
-    }
+  const onBus = new Set<number>();
+  for (const idxs of busEdges(graph).values()) {
+    for (const i of idxs) onBus.add(i);
   }
 
+  const lanesPerGap = new Map<number, Set<string>>();
+  graph.edges.forEach((edge, i) => {
+    if (isSelfReference(edge)) return;
+    const from = nodeLayer.get(edge.source);
+    const to = nodeLayer.get(edge.target);
+    if (from === undefined || to === undefined) return;
+    if ((nodePos.get(edge.source) ?? 0) === (nodePos.get(edge.target) ?? 0)) return;
+    for (let gap = Math.min(from, to); gap < Math.max(from, to); gap++) {
+      const laneKey = onBus.has(i) && to === from + 1 ? `bus:${edge.source}` : `edge:${i}`;
+      let set = lanesPerGap.get(gap);
+      if (set === undefined) {
+        set = new Set();
+        lanesPerGap.set(gap, set);
+      }
+      set.add(laneKey);
+    }
+  });
+
   const expansions = new Map<number, number>();
-  for (const [gap, n] of diagonals) expansions.set(gap, Math.max(0, n - 1));
+  for (const [gap, lanes] of lanesPerGap) expansions.set(gap, Math.max(0, lanes.size - 1));
   return expansions;
 }
